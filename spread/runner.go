@@ -34,6 +34,7 @@ type Options struct {
 	Residue     string
 	Seed        int64
 	XUnit       bool
+	RawPty      bool
 }
 
 type Runner struct {
@@ -454,7 +455,15 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 	}
 	client.SetWarnTimeout(job.WarnTimeoutFor(context))
 	client.SetKillTimeout(job.KillTimeoutFor(context))
-	_, err, dur := client.Trace(script, dir, job.Environment)
+	
+	var err error
+	var dur time.Duration
+	if r.options.RawPty {
+		_, err, dur = client.RawPty(script, dir, job.Environment)
+	} else {
+		_, err, dur = client.Trace(script, dir, job.Environment)	
+	}
+	
 	job.Duration = dur
 	if err != nil {
 		printf("Error %s %s : %v", verb, contextStr, err)

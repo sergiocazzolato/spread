@@ -209,6 +209,7 @@ const (
 	combinedOutput
 	splitOutput
 	shellOutput
+	rawOutput
 )
 
 func (c *Client) Run(script string, dir string, env *Environment) error {
@@ -234,6 +235,11 @@ func (c *Client) Trace(script string, dir string, env *Environment) (output []by
 func (c *Client) Shell(script string, dir string, env *Environment) error {
 	_, err, _ := c.run(script, dir, env, shellOutput)
 	return err
+}
+
+func (c *Client) RawPty(script string, dir string, env *Environment) (output []byte, err error, duration time.Duration) {
+	output, err, duration = c.run(script, dir, env, rawOutput)
+	return output, err, duration
 }
 
 type rebootError struct {
@@ -319,6 +325,9 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 			return "cat >> /root/.bashrc <<'END'\n" + s + "END\n"
 		}
 	}
+	if mode == rawOutput {
+		//TODO
+	}
 	if dir != "" {
 		buf.WriteString(fmt.Sprintf("cd \"%s\"\n", dir))
 	}
@@ -350,7 +359,7 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 	}
 
 	// Don't trace environment variables so secrets don't leak.
-	if mode == traceOutput {
+	if mode == traceOutput || mode == rawOutput {
 		buf.WriteString("set -x\n")
 	}
 
@@ -394,6 +403,17 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 		cmd = c.sudo() + "/bin/bash -"
 		session.Stdout = &stdout
 		session.Stderr = &stderr
+	case rawOutput:
+		cmd = fmt.Sprintf("{\nf=$(mktemp)\ntrap 'rm '$f EXIT\ncat > $f <<'SCRIPT_END'\n%s\nSCRIPT_END\n%s/bin/bash $f\n}", buf.String(), c.sudo())
+		session.Stdout = &stdout
+		session.Stderr = &stderr
+		w, h, err := terminal.GetSize(0)
+		if err != nil {
+			return nil, fmt.Errorf("cannot get local terminal size: %v", err), 0
+		}
+		if err := session.RequestPty(getenv("TERM", "vt100"), h, w, nil); err != nil {
+			return nil, fmt.Errorf("cannot get remote pseudo terminal: %v", err), 0
+		}
 	case shellOutput:
 		cmd = fmt.Sprintf("{\nf=$(mktemp)\ntrap 'rm '$f EXIT\ncat > $f <<'SCRIPT_END'\n%s\nSCRIPT_END\n%s/bin/bash $f\n}", buf.String(), c.sudo())
 		session.Stdout = os.Stdout
@@ -410,7 +430,7 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 	}
 
 	startTime := time.Now()
-	if mode == shellOutput {
+	if mode == shellOutput || mode == rawOutput {
 		termLock()
 		tstate, terr := terminal.MakeRaw(0)
 		if terr != nil {

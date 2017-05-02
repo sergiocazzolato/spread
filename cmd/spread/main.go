@@ -33,6 +33,7 @@ var (
 	residue     = flag.String("residue", "", "Where to store residual data from tasks")
 	seed        = flag.Int64("seed", 0, "Seed for job order permutation")
 	xunit       = flag.Bool("xunit", false, "Create a XUnit report")
+	rawpty      = flag.Bool("rawpty", false, "Create a raw pty to run the task scripts")
 )
 
 func main() {
@@ -94,6 +95,7 @@ func run() error {
 		Residue:     *residue,
 		Seed:        *seed,
 		XUnit:       *xunit,
+		RawPty:      *rawpty,
 	}
 
 	project, err := spread.Load(".")
