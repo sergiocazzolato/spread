@@ -38,6 +38,7 @@ type Options struct {
 	GarbageCollect bool
 	Order          bool
 	ShowOutput     bool
+	Workers        int
 }
 
 type Runner struct {

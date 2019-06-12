@@ -18,6 +18,7 @@ Spread
 [Debugging](#debugging)
 [Repeating tasks](#repeating)
 [Showing output for tasks](#showing-output)
+[Define number of Workers](#workers)
 [Passwords and usernames](#passwords)
 [Including, excluding, and renaming files](#including)
 [Selecting which tasks to run](#selecting)
@@ -591,6 +592,16 @@ needed for debugging, tracing, etc.
 This option can be used just when 1 job is used at all. This limitation it
 needed to avoid mixing the output of different jobs in the same output.
 
+<a name="workers"/>
+
+## Define number of Workers
+
+The number of workers can be set as part of the spread.yaml file and also by
+using the `-workers` option, which receives an integer indicating
+the number of workers used by all the systems selected for the run.
+
+In case the `-workers` option is not used, the number of workers used is the
+provided for the system in the spread.yaml which is 1 by default.
 
 <a name="passwords">
 
