@@ -120,6 +120,9 @@ type System struct {
 	Cert     bool
 	Workers  int
 
+	// Only for Testflinger so far.
+	Queue	string
+
 	// Only for Linode and Google so far.
 	Storage Size
 
