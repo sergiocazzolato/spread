@@ -32,7 +32,7 @@ type Options struct {
 	Restore        bool
 	Resend         bool
 	Discard        bool
-	Residue        string
+	Artifacts      string
 	Seed           int64
 	Repeat         int
 	GarbageCollect bool
@@ -859,14 +859,14 @@ func (r *Runner) client(backend *Backend, system *System) *Client {
 	return nil
 }
 
-func (r *Runner) fetchResidue(client *Client, job *Job) error {
-	if r.options.Residue == "" || len(job.Task.Residue) == 0 {
+func (r *Runner) fetchArtifacts(client *Client, job *Job) error {
+	if r.options.Artifacts == "" || len(job.Task.Artifacts) == 0 {
 		return nil
 	}
 
-	localDir := filepath.Join(r.options.Residue, job.Name)
+	localDir := filepath.Join(r.options.Artifacts, job.Name)
 	if err := os.MkdirAll(localDir, 0755); err != nil {
-		return fmt.Errorf("cannot create residue directory: %v", err)
+		return fmt.Errorf("cannot create artifacts directory: %v", err)
 	}
 
 	tarr, tarw := io.Pipe()
@@ -881,10 +881,10 @@ func (r *Runner) fetchResidue(client *Client, job *Job) error {
 		return fmt.Errorf("cannot start unpacking tar: %v", err)
 	}
 
-	printf("Fetching residue of %s...", job)
+	printf("Fetching artifacts of %s...", job)
 
 	remoteDir := filepath.Join(r.project.RemotePath, job.Task.Name)
-	err = client.RecvTar(remoteDir, job.Task.Residue, tarw)
+	err = client.RecvTar(remoteDir, job.Task.Artifacts, tarw)
 	tarw.Close()
 	terr := cmd.Wait()
 
