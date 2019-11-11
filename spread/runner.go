@@ -38,6 +38,7 @@ type Options struct {
 	GarbageCollect bool
 	Order          bool
 	ShowOutput     bool
+	ShowTime       bool
 	Workers        int
 }
 
@@ -211,6 +212,17 @@ func (r *Runner) loop() (err error) {
 					}
 				}
 			}
+		}
+	}
+
+	// It is allowed showing the output when 1 worker is used at all
+	if r.options.ShowOutput {
+		total := 0
+		for _, w := range workers {
+		    total += w
+		}
+		if total > 1 {
+			return fmt.Errorf("Just 1 worker can be used at all when show-output is required")	
 		}
 	}
 
@@ -497,7 +509,9 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 	client.SetKillTimeout(job.KillTimeoutFor(context))
 
 	var err error
-	if r.options.ShowOutput {
+	if r.options.ShowOutput && r.options.ShowTime {
+		_, err = client.ShowOutputAndTime(script, dir, job.Environment)
+	} else if r.options.ShowOutput {
 		_, err = client.ShowOutput(script, dir, job.Environment)
 	} else {
 		_, err = client.Trace(script, dir, job.Environment)

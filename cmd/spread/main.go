@@ -36,6 +36,7 @@ var (
 	garbageCollect = flag.Bool("gc", false, "Garbage collect backend resources when possible")
 	order          = flag.Bool("order", false, "Follow the tasks order passed as parameter")
 	showOutput     = flag.Bool("show-output", false, "Display the scripts output during the execution")
+	showTime       = flag.Bool("show-time", false, "Display the time with milliseconds with the scripts output")
 	workers        = flag.Int("workers", 0, "Number of workers to use on each system")
 )
 
@@ -61,6 +62,10 @@ func run() error {
 
 		}
 		other = other || b
+	}
+
+	if *showTime && ! *showOutput {
+		return fmt.Errorf("show-time option can be used just when show-output is used")
 	}
 
 	password := *pass
@@ -101,6 +106,7 @@ func run() error {
 		GarbageCollect: *garbageCollect,
 		Order:          *order,
 		ShowOutput:     *showOutput,
+		ShowTime:       *showTime,
 		Workers:        *workers,
 	}
 
