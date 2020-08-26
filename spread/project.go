@@ -126,6 +126,9 @@ type System struct {
 	// Only for Linode and Google so far.
 	Storage Size
 
+	// Only for Google so far.
+	SecureBoot bool `yaml:"secure-boot"`
+
 	Environment *Environment
 	Variants    []string
 
