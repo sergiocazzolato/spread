@@ -219,10 +219,10 @@ func (r *Runner) loop() (err error) {
 	if r.options.ShowOutput {
 		total := 0
 		for _, w := range workers {
-		    total += w
+			total += w
 		}
 		if total > 1 {
-			return fmt.Errorf("Just 1 worker can be used at all when show-output is required")	
+			return fmt.Errorf("Just 1 worker can be used at all when show-output is required")
 		}
 	}
 
@@ -510,9 +510,7 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 	client.SetKillTimeout(job.KillTimeoutFor(context))
 
 	var err error
-	if r.options.ShowOutput && r.options.ShowTime {
-		_, err = client.ShowOutputAndTime(script, dir, job.Environment)
-	} else if r.options.ShowOutput {
+	if r.options.ShowOutput {
 		_, err = client.ShowOutput(script, dir, job.Environment)
 	} else {
 		_, err = client.Trace(script, dir, job.Environment)
@@ -532,13 +530,13 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 		start = start.Add(1)
 		printft(start, startTime|endTime|startFold|endFold, "Error %s %s (%s) : %v", verb, contextStr, server.Label(), err)
 		if debug != "" {
-			if ! r.options.ShowOutput {
+			if !r.options.ShowOutput {
 				start = time.Now()
 				output, err := client.Trace(debug, dir, job.Environment)
 				if err != nil {
-				printft(start, startTime|endTime|startFold|endFold, "Error debugging %s (%s) : %v", contextStr, server.Label(), err)
+					printft(start, startTime|endTime|startFold|endFold, "Error debugging %s (%s) : %v", contextStr, server.Label(), err)
 				} else if len(output) > 0 {
-				printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
+					printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
 				}
 			}
 		}

@@ -1017,7 +1017,6 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 
 	all := jobs
 	jobs = make([]*Job, 0, len(all))
-
 	backends := make(map[string]bool)
 	for _, job := range all {
 		if !manualBackends && job.Backend.Manual {

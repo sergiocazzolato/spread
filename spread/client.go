@@ -251,7 +251,6 @@ const (
 	combinedOutput
 	splitOutput
 	showOutput
-	showOutputAndTime
 	shellOutput
 )
 
@@ -266,10 +265,6 @@ func (c *Client) Output(script string, dir string, env *Environment) (output []b
 
 func (c *Client) ShowOutput(script string, dir string, env *Environment) (output []byte, err error) {
 	return c.run(script, dir, env, showOutput)
-}
-
-func (c *Client) ShowOutputAndTime(script string, dir string, env *Environment) (output []byte, err error) {
-	return c.run(script, dir, env, showOutputAndTime)
 }
 
 func (c *Client) CombinedOutput(script string, dir string, env *Environment) (output []byte, err error) {
@@ -293,7 +288,7 @@ func (e *rebootError) Error() string { return "reboot requested" }
 
 const maxReboots = 10
 
-func (c *Client) run(script string, dir string, env *Environment, mode outputMode) (output []byte, err error) {	
+func (c *Client) run(script string, dir string, env *Environment, mode outputMode) (output []byte, err error) {
 	if env == nil {
 		env = NewEnvironment()
 	}
@@ -395,7 +390,7 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 		buf.WriteString("unset SUDO_UID\n")
 		buf.WriteString("unset SUDO_GID\n")
 	}
-	buf.WriteString(rc(false, "REBOOT() { { set +xu; } 2> /dev/null; [ -z \"$1\" ] && echo '<REBOOT>' || echo \"<REBOOT $1>\"; exit 214; }\n"))
+	buf.WriteString(rc(false, "REBOOT() { { set +xu; } 2> /dev/null; [ -z \"$1\" ] && echo '<REBOOT>' || echo \"<REBOOT $1>\"; exit 213; }\n"))
 	buf.WriteString(rc(false, "ERROR() { { set +xu; } 2> /dev/null; [ -z \"$1\" ] && echo '<ERROR>' || echo \"<ERROR $@>\"; exit 213; }\n"))
 	// We are not using pipes here, see:
 	//  https://github.com/snapcore/spread/pull/64
@@ -469,10 +464,6 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 	case showOutput:
 		cmd = c.sudo() + "/bin/bash - 2>&1"
 		session.Stdout = os.Stdout
-	case showOutputAndTime:
-		adddate := "awk '{cmd=\"(date +'%T.%3N')\"; cmd | getline d; print d,$0; close(cmd)}'"
-		cmd = c.sudo() + "/bin/bash - 2>&1 | " + adddate
-		session.Stdout = os.Stdout
 	case shellOutput:
 		cmd = fmt.Sprintf("{\nf=$(mktemp)\ntrap 'rm '$f EXIT\ncat > $f <<'SCRIPT_END'\n%s\nSCRIPT_END\n%s/bin/bash $f\n}", buf.String(), c.sudo())
 		session.Stdout = os.Stdout
@@ -514,15 +505,10 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 		if len(m) > 0 && string(m[1]) == "ERROR" {
 			return nil, fmt.Errorf("%s", m[2])
 		}
-	}
-
-	if e, ok := err.(*ssh.ExitError); ok && e.ExitStatus() == 214 {
-		lines := bytes.Split(bytes.TrimSpace(stdout.Bytes()), []byte{'\n'})
-		m := commandExp.FindSubmatch(lines[len(lines)-1])
 		if len(m) > 0 && string(m[1]) == "REBOOT" {
 			return append(previous, stdout.Bytes()...), &rebootError{string(m[2])}
 		}
-		if mode == showOutput || mode == showOutputAndTime {
+		if mode == showOutput {
 			return append(previous, stdout.Bytes()...), &rebootError{"Reboot"}
 		}
 	}
@@ -879,7 +865,7 @@ func (s *localScript) run() (stdout, stderr []byte, err error) {
 	cmd.Dir = s.dir
 	cmd.ExtraFiles = s.extraFiles
 	switch s.mode {
-	case traceOutput, combinedOutput, showOutput, showOutputAndTime:
+	case traceOutput, combinedOutput, showOutput:
 		cmd.Stdout = &outbuf
 		cmd.Stderr = &outbuf
 	case splitOutput:
