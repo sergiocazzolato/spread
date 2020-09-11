@@ -37,9 +37,8 @@ type Options struct {
 	Repeat         int
 	GarbageCollect bool
 	Order          bool
+	SingleWorker   bool
 	ShowOutput     bool
-	ShowTime       bool
-	Workers        int
 }
 
 type Runner struct {
