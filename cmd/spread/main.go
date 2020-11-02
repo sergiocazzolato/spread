@@ -99,6 +99,7 @@ func run() error {
 		Seed:           *seed,
 		Repeat:         *repeat,
 		GarbageCollect: *garbageCollect,
+		ShowOutput:     *vverbose,
 		Order:          *order,
 		SingleWorker:   *singleWorker,
 	}
