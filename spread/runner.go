@@ -980,7 +980,7 @@ Allocate:
 
 	username := system.Username
 	password := system.Password
-	cert := system.Cert
+	sshkeyfile := system.SSHKeyFile
 	if username == "" {
 		username = "root"
 	}
@@ -992,7 +992,7 @@ Allocate:
 Dial:
 	for {
 		lerr := err
-		client, err = Dial(server, username, password, cert)
+		client, err = Dial(server, username, password, sshkeyfile)
 		if err == nil {
 			break
 		}
@@ -1063,11 +1063,11 @@ func (r *Runner) reuseServer(backend *Backend, system *System) *Client {
 		printf("Reusing %s...", server)
 		username := rsystem.Username
 		password := rsystem.Password
-		cert := system.Cert
+		sshkeyfile := system.SSHKeyFile
 		if username == "" {
 			username = "root"
 		}
-		client, err := Dial(server, username, password, cert)
+		client, err := Dial(server, username, password, sshkeyfile)
 		if err != nil {
 			if r.options.Reuse {
 				printf("Cannot reuse %s at %s: %v", system, rsystem.Address, err)

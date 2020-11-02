@@ -112,13 +112,13 @@ func (sysmap *SystemsMap) UnmarshalYAML(u func(interface{}) error) error {
 type System struct {
 	Backend string `json:"-"`
 
-	Name     string
-	Image    string
-	Kernel   string
-	Username string
-	Password string
-	Cert     bool
-	Workers  int
+	Name       string
+	Image      string
+	Kernel     string
+	Username   string
+	Password   string
+	SSHKeyFile string `yaml:"ssh-rsa-key"`
+	Workers    int
 
 	// Only for Testflinger so far.
 	Queue	string
@@ -1069,7 +1069,14 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 					return nil, err
 				}
 				system.Password = value
-		    }
+			}
+			if system.SSHKeyFile != "" {
+				value, err := evalone(system.String()+" sshkeyfile", system.SSHKeyFile, cmdcache, false, penv, benv)
+				if err != nil {
+					return nil, err
+				}
+				system.SSHKeyFile = value
+			}
 		}
 	}
 
