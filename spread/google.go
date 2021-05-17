@@ -400,7 +400,7 @@ func (p *googleProvider) createMachine(ctx context.Context, system *System) (*go
 	} else {
 		sourceImage += "global/images/" + image.Name
 	}
-	debugf("System %s will use Google image %s", system, sourceImage)
+	printf("System %s will use Google image %s", system, sourceImage)
 
 	labels := googleParams{
 		"spread": "true",
