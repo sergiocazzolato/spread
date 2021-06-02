@@ -129,6 +129,7 @@ type System struct {
 	// Only for Google so far.
 	SecureBoot     bool   `yaml:"secure-boot"`
 	MinCpuPlatform string `yaml:"min-cpu-platform"`
+	Plan           string
 
 	Environment *Environment
 	Variants    []string
@@ -559,6 +560,9 @@ func Load(path string) (*Project, error) {
 			}
 			if system.Storage == 0 {
 				system.Storage = backend.Storage
+			}
+			if system.Plan == "" {
+				system.Plan = backend.Plan
 			}
 			if err := checkEnv(system, &system.Environment); err != nil {
 				return nil, err
