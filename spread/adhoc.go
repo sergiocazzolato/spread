@@ -75,14 +75,23 @@ func (p *adhocProvider) Reuse(ctx context.Context, rsystem *ReuseSystem, system 
 	return s, nil
 }
 
-func (p *adhocProvider) Allocate(ctx context.Context, system *System) (Server, error) {
+func (p *adhocProvider) Allocate(ctx context.Context, system *System, worker int) (Server, error) {
 	result, err := p.run(p.backend.Allocate, system, "")
 	if err != nil {
 		return nil, err
 	}
 	addr := result["ADDRESS"]
 	if addr == "" || strings.Contains(addr, " ") {
-		return nil, fmt.Errorf("%s allocate must print ADDRESS=<SSH address> to stdout, got: %q", p.backend, addr)
+		return nil, fmt.Errorf("%s allocate must print ADDRESS=<SSH address>[,<SSH address>] to stdout, got: %q", p.backend, addr)
+	}
+
+	if strings.Contains(addr, ",") {
+	 	addresses := strings.Split(addr, ",")
+	 	if len(addresses) <= worker {
+	 		return nil, fmt.Errorf("Not enough addesses defined for the amount of workers selected")
+	 	} else {
+			addr = addresses[worker]
+		}
 	}
 
 	s := &adhocServer{
