@@ -99,7 +99,7 @@ func systemPath(system *System) string {
 
 func (p *qemuProvider) Allocate(ctx context.Context, system *System, worker int) (Server, error) {
 	// FIXME Find an available port more reliably.
-	port := 59301 + rand.Intn(99)
+	port := 59301 + rand.Intn(999)
 
 	path := systemPath(system)
 	if info, err := os.Stat(path); err != nil || info.IsDir() {
