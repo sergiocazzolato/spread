@@ -38,6 +38,7 @@ type Options struct {
 	GarbageCollect bool
 	Order          bool
 	SingleWorker   bool
+	Workers        int
 	ShowOutput     bool
 }
 
@@ -250,8 +251,8 @@ func (r *Runner) loop() (err error) {
 				if r.options.Order {
 					order = makeRange(len(r.pending))
 				}
-
 				go r.worker(backend, system, order)
+
 			}
 		}
 	}
@@ -578,10 +579,10 @@ func suiteWorkersKey(job *Job) [3]string {
 	return [3]string{job.Backend.Name, job.System.Name, job.Suite.Name}
 }
 
-func (r *Runner) worker(backend *Backend, system *System, order []int) {
+func (r *Runner) worker(backend *Backend, system *System, worker int, order []int) {
 	defer func() { r.done <- true }()
 
-	client := r.client(backend, system)
+	client := r.client(backend, system, worker)
 	if client == nil {
 		return
 	}
@@ -804,7 +805,7 @@ func (r *Runner) minSampleForTask(other *Job) *Job {
 	return nil
 }
 
-func (r *Runner) client(backend *Backend, system *System) *Client {
+func (r *Runner) client(backend *Backend, system *System, worker int) *Client {
 
 	retries := 0
 	for r.tomb.Alive() {
@@ -820,7 +821,7 @@ func (r *Runner) client(backend *Backend, system *System) *Client {
 			if r.options.Reuse && len(r.reuse.ReuseSystems(system)) > 0 {
 				break
 			}
-			client = r.allocateServer(backend, system)
+			client = r.allocateServer(backend, system, worker)
 			if client == nil {
 				break
 			}
@@ -921,7 +922,7 @@ func (r *Runner) discardServer(server Server) {
 	r.mu.Unlock()
 }
 
-func (r *Runner) allocateServer(backend *Backend, system *System) *Client {
+func (r *Runner) allocateServer(backend *Backend, system *System, worker int) *Client {
 	if r.options.Discard {
 		return nil
 	}
@@ -938,7 +939,8 @@ func (r *Runner) allocateServer(backend *Backend, system *System) *Client {
 Allocate:
 	for {
 		lerr := err
-		server, err = r.providers[backend.Name].Allocate(r.tomb.Context(nil), system)
+		server, err = r.providers[backend.Name].Allocate(r.tomb.Context(nil), system, worker)
+
 		if err == nil {
 			break
 		}

@@ -37,6 +37,7 @@ var (
 	garbageCollect = flag.Bool("gc", false, "Garbage collect backend resources when possible")
 	order          = flag.Bool("order", false, "Follow the tasks order passed as parameter")
 	singleWorker   = flag.Bool("single-worker", false, "Run with a single worker on each system")
+	workers        = flag.Int("workers", 0, "Number of workers to use on each system")
 )
 
 func main() {
@@ -102,6 +103,7 @@ func run() error {
 		ShowOutput:     *vverbose,
 		Order:          *order,
 		SingleWorker:   *singleWorker,
+		Workers:        *workers,
 	}
 
 	project, err := spread.Load(".")

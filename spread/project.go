@@ -900,6 +900,15 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 			}
 		}
 	}
+	
+	// Set the all the system workers to the options value
+	if options.Workers > 0 {
+		for _, backend := range p.Backends {
+			for _, system := range backend.Systems {
+				system.Workers = options.Workers
+			}
+		}
+	}
 
 	for _, suite := range p.Suites {
 		senv := envmap{suite, suite.Environment}
