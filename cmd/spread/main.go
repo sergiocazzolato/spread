@@ -104,6 +104,7 @@ func run() error {
 		Order:          *order,
 		SingleWorker:   *singleWorker,
 		Workers:        *workers,
+		Serial:         *serial,
 	}
 
 	project, err := spread.Load(".")

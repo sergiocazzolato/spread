@@ -129,6 +129,7 @@ type System struct {
 	// Only for Google so far.
 	SecureBoot     bool   `yaml:"secure-boot"`
 	MinCpuPlatform string `yaml:"min-cpu-platform"`
+	// Specify a backend specific plan, e.g. `e2-standard-2`
 	Plan           string
 
 	Environment *Environment
@@ -1393,7 +1394,7 @@ type OptionalInt struct {
 }
 
 func (s OptionalInt) String() string {
-	return strconv.FormatInt(s.Value, 64)
+	return strconv.FormatInt(s.Value, 10)
 }
 
 func (s *OptionalInt) UnmarshalYAML(u func(interface{}) error) error {

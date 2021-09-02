@@ -117,6 +117,10 @@ func (s *humboxServer) Discard(ctx context.Context) error {
 	return s.p.removeMachine(ctx, s)
 }
 
+func (s *humboxServer) SerialOutput() ([]byte, error) {
+	return nil, nil
+}
+
 func (p *humboxProvider) GarbageCollect() error {
 	return nil
 }
@@ -206,7 +210,7 @@ func (p *humboxProvider) checkKey() error {
 
 	m := humboxLocation.FindStringSubmatch(p.backend.Location)
 	if m == nil {
-		err = fmt.Errorf("location for %q backend must use the http(s)://<user>@<hostname>:<port> format", p.backend.Name)
+		return fmt.Errorf("location for %q backend must use the http(s)://<user>@<hostname>:<port> format", p.backend.Name)
 	}
 
 	p.account = m[2]
