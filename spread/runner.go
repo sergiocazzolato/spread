@@ -253,7 +253,6 @@ func (r *Runner) loop() (err error) {
 					order = makeRange(len(r.pending))
 				}
 				go r.worker(backend, system, order)
-
 			}
 		}
 	}
@@ -540,6 +539,7 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 					printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
 				}
 			}
+		}
 		if r.options.Serial {
 			output, err := server.SerialOutput()
 			if err != nil {

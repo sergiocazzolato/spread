@@ -85,6 +85,10 @@ func (s *tfServer) ReuseData() interface{} {
 	return &s.d
 }
 
+func (s *tfServer) SerialOutput() ([]byte, error) {
+	return nil, nil
+}
+
 func (s *tfServer) Discard(ctx context.Context) error {
 	output, err := exec.Command("testflinger-cli", "cancel", s.d.JobId).CombinedOutput()
 	if err != nil {
