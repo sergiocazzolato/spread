@@ -37,6 +37,7 @@ var (
 	tag            = flag.String("tag", "", "Filter tests which match with the tag specified")
 	garbageCollect = flag.Bool("gc", false, "Garbage collect backend resources when possible")
 	order          = flag.Bool("order", false, "Follow the tasks order passed as parameter")
+	workers        = flag.Int("workers", 0, "Number of workers to use on each system")
 )
 
 func main() {
@@ -102,6 +103,7 @@ func run() error {
 		GarbageCollect: *garbageCollect,
 		Order:          *order,
 		ShowOutput:     *vverbose,
+		Workers:        *workers,
 	}
 
 	project, err := spread.Load(".")

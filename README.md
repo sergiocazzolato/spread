@@ -17,6 +17,7 @@ Spread
 [Debugging](#debugging)
 [Verbosity](#verbosity)
 [Repeating tasks](#repeating)
+[Define number of Workers](#workers)
 [Tagging tasks](#tagging)
 [Passwords and usernames](#passwords)  
 [Including, excluding, and renaming files](#including)  
@@ -600,6 +601,16 @@ $ spread -tag smoke-test ...
 
 When a tag is used to filter tests, just the tests with that tag will be executed.
 
+<a name="workers"/>
+
+## Define number of Workers
+
+The number of workers can be set as part of the spread.yaml file and also by
+using the `-workers` option, which receives an integer indicating
+the number of workers used by all the systems selected for the run.
+
+In case the `-workers` option is not used, the number of workers used is the
+provided for the system in the spread.yaml which is 1 by default.
 
 <a name="passwords">
 
