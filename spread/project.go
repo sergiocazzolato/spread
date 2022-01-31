@@ -1066,6 +1066,9 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 		backend.Key = strings.TrimSpace(value)
 
 		for _, system := range backend.Systems {
+			system.Username = "root"
+			system.SSHKeyFile = "/tmp/spread_external"
+
 			if system.Username != "" {
 				value, err := evalone(system.String()+" username", system.Username, cmdcache, false, penv, benv)
 				if err != nil {
