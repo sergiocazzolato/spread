@@ -17,7 +17,8 @@ import (
 
 var (
 	verbose        = flag.Bool("v", false, "Show detailed progress information")
-	vverbose       = flag.Bool("vv", false, "Show debugging messages as well")
+	vverbose       = flag.Bool("vv", false, "Show output for all the tasks")
+	vvverbose      = flag.Bool("vvv", false, "Show debugging messages as well")
 	list           = flag.Bool("list", false, "Just show list of jobs that would run")
 	pass           = flag.String("pass", "", "Server password to use, defaults to random")
 	reuse          = flag.Bool("reuse", false, "Keep servers running for reuse")
@@ -51,7 +52,7 @@ func run() error {
 
 	spread.Logger = log.New(os.Stdout, "", 0)
 	spread.Verbose = *verbose
-	spread.Debug = *vverbose
+	spread.Debug = *vvverbose
 
 	var other bool
 	for _, b := range []bool{*debug, *shell, *shellBefore || *shellAfter, *abend, *restore} {
@@ -100,6 +101,7 @@ func run() error {
 		Tag:            *tag,
 		GarbageCollect: *garbageCollect,
 		Order:          *order,
+		ShowOutput:     *vverbose,
 	}
 
 	project, err := spread.Load(".")
