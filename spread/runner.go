@@ -76,6 +76,8 @@ func Start(project *Project, options *Options) (*Runner, error) {
 
 	for bname, backend := range project.Backends {
 		switch backend.Type {
+		case "amazon":
+			r.providers[bname] = Amazon(project, backend, options)
 		case "google":
 			r.providers[bname] = Google(project, backend, options)
 		case "linode":
