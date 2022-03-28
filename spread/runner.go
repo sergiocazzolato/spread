@@ -36,6 +36,7 @@ type Options struct {
 	Residue        string
 	Seed           int64
 	Repeat         int
+	RepeatAll      int
 	Tag            string
 	GarbageCollect bool
 	Order          bool

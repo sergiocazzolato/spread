@@ -1111,6 +1111,14 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 		jobs = options.Filter.Order(jobs)
 	}
 
+	if options.RepeatAll > 0 {
+		jobsWithRepeat := []*Job{}
+		for repeatAll := options.RepeatAll; repeatAll >= 0; repeatAll-- {
+			jobsWithRepeat = append(jobsWithRepeat, jobs...)
+		}
+
+		return jobsWithRepeat, nil
+	}
 	return jobs, nil
 }
 
