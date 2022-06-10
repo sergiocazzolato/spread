@@ -71,9 +71,18 @@ func Dial(server Server, username, password string, sshkeyfile string) (*Client,
 		addr += ":22"
 	}
 	sshc, err := sshDial("tcp", addr, config)
+	for retry := 0; retry < 5; retry++ {
+		if err != nil {
+			printf("Failed to stablish ssh connection, retrying ...")
+		} else {
+			break
+		}
+		sshc, err = sshDial("tcp", addr, config)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot connect to %s: %v", server, err)
 	}
+
 	client := &Client{
 		server: server,
 		sshc:   sshc,
