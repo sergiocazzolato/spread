@@ -165,7 +165,7 @@ test -d /etc/ssh/sshd_config.d && echo -e 'PermitRootLogin=yes\nPasswordAuthenti
 
 pkill -o -HUP sshd || true
 
-echo -e '\n` + googleReadyMarker + `\n' > /dev/console
+echo -e '\n` + googleReadyMarker + `\n' > /dev/ttyS0 || echo -e '\n` + googleReadyMarker + `\n' > /dev/console
 `
 
 const googleReadyMarker = "MACHINE-IS-READY"
