@@ -397,7 +397,8 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 	} else {
 		// Prevent any commands attempting to read from stdin to consume
 		// the shell script itself being sent to bash via its stdin.
-		fmt.Fprintf(&buf, "\n(\n%s\n) < /dev/null\n", script)
+		printcmd := "awk '{ print strftime(\"%F %T -> \"), $0; fflush(); }'"
+		fmt.Fprintf(&buf, "\n(\n%s\n) | %s\n", script, printcmd)
 	}
 
 	errch := make(chan error, 2)
