@@ -17,7 +17,8 @@ import (
 
 var (
 	verbose        = flag.Bool("v", false, "Show detailed progress information")
-	vverbose       = flag.Bool("vv", false, "Show debugging messages as well")
+	vverbose       = flag.Bool("vv", false, "Show output for all the tasks")
+	vvverbose      = flag.Bool("vvv", false, "Show debugging messages as well")
 	list           = flag.Bool("list", false, "Just show list of jobs that would run")
 	pass           = flag.String("pass", "", "Server password to use, defaults to random")
 	reuse          = flag.Bool("reuse", false, "Keep servers running for reuse")
@@ -33,7 +34,11 @@ var (
 	artifacts      = flag.String("artifacts", "", "Where to store task artifacts")
 	seed           = flag.Int64("seed", 0, "Seed for job order permutation")
 	repeat         = flag.Int("repeat", 0, "Number of times to repeat each task")
+	repeatAll      = flag.Int("repeat-all", 0, "Number of times to repeat all the tasks")
+	tag            = flag.String("tag", "", "Filter tests which match with the tag specified")
 	garbageCollect = flag.Bool("gc", false, "Garbage collect backend resources when possible")
+	order          = flag.Bool("order", false, "Follow the tasks order passed as parameter")
+	workers        = flag.Int("workers", 0, "Number of workers to use on each system")
 )
 
 func main() {
@@ -49,7 +54,7 @@ func run() error {
 
 	spread.Logger = log.New(os.Stdout, "", 0)
 	spread.Verbose = *verbose
-	spread.Debug = *vverbose
+	spread.Debug = *vvverbose
 
 	var other bool
 	for _, b := range []bool{*debug, *shell, *shellBefore || *shellAfter, *abend, *restore} {
@@ -95,7 +100,12 @@ func run() error {
 		Artifacts:      *artifacts,
 		Seed:           *seed,
 		Repeat:         *repeat,
+		RepeatAll:      *repeatAll,
+		Tag:            *tag,
 		GarbageCollect: *garbageCollect,
+		Order:          *order,
+		ShowOutput:     *vverbose,
+		Workers:        *workers,
 	}
 
 	project, err := spread.Load(".")

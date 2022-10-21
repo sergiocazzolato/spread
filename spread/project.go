@@ -112,12 +112,13 @@ func (sysmap *SystemsMap) UnmarshalYAML(u func(interface{}) error) error {
 type System struct {
 	Backend string `json:"-"`
 
-	Name     string
-	Image    string
-	Kernel   string
-	Username string
-	Password string
-	Workers  int
+	Name       string
+	Image      string
+	Kernel     string
+	Username   string
+	Password   string
+	SSHKeyFile string `yaml:"ssh-rsa-key"`
+	Workers    int
 
 	// Only for Linode and Google so far.
 	Storage Size
@@ -361,6 +362,7 @@ type Task struct {
 
 	Priority OptionalInt
 	Manual   bool
+	Tags     []string
 }
 
 func (t *Task) String() string { return t.Name }
@@ -742,6 +744,7 @@ func checkSystems(context fmt.Stringer, systems []string) error {
 
 type Filter interface {
 	Pass(job *Job) bool
+	Order(jobs []*Job) []*Job
 }
 
 type filterExp struct {
@@ -772,6 +775,29 @@ func (f *filter) Pass(job *Job) bool {
 		}
 	}
 	return false
+}
+
+func (f *filter) Order(jobs []*Job) []*Job {
+	if len(f.exps) == 0 {
+		return jobs
+	}
+	alljobs := []*Job{}
+	for _, exp := range f.exps {
+		for _, job := range jobs {
+			if exp.firstSample > 0 {
+				if job.Sample < exp.firstSample {
+					continue
+				}
+				if job.Sample > exp.lastSample {
+					continue
+				}
+			}
+			if exp.regexp.MatchString(job.Name) {
+				alljobs = append(alljobs, job)
+			}
+		}
+	}
+	return alljobs
 }
 
 func NewFilter(args []string) (Filter, error) {
@@ -830,7 +856,6 @@ func NewFilter(args []string) (Filter, error) {
 			firstSample: firstSample,
 			lastSample:  lastSample,
 		})
-
 	}
 	return &filter{exps}, nil
 }
@@ -864,6 +889,16 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 	p.RemotePath = filepath.Clean(value)
 	if !filepath.IsAbs(p.RemotePath) || filepath.Dir(p.RemotePath) == p.RemotePath {
 		return nil, fmt.Errorf("remote project path must be absolute and not /: %s", p.RemotePath)
+	}
+
+	// In case the number of workers set in the options is bigger than 0,
+	// update all the systems with the numbers set in the options
+	if options.Workers > 0 {
+		for _, backend := range p.Backends {
+			for _, system := range backend.Systems {
+				system.Workers = options.Workers
+			}
+		}
 	}
 
 	for _, suite := range p.Suites {
@@ -1000,6 +1035,12 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 		if !manualTasks && job.Task.Manual {
 			continue
 		}
+
+		// Check the tag in the job in case a tag is specified in the options
+		if options.Tag != "" && !contains(job.Task.Tags, options.Tag) {
+			continue
+		}
+
 		jobs = append(jobs, job)
 		backends[job.Backend.Name] = true
 	}
@@ -1040,6 +1081,13 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 				}
 				system.Password = value
 			}
+			if system.SSHKeyFile != "" {
+				value, err := evalone(system.String()+" sshkeyfile", system.SSHKeyFile, cmdcache, false, penv, benv)
+				if err != nil {
+					return nil, err
+				}
+				system.SSHKeyFile = value
+			}
 		}
 	}
 
@@ -1059,7 +1107,18 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 	}
 
 	sort.Sort(jobsByName(jobs))
+	if options.Order {
+		jobs = options.Filter.Order(jobs)
+	}
 
+	if options.RepeatAll > 0 {
+		jobsWithRepeat := []*Job{}
+		for repeatAll := options.RepeatAll; repeatAll >= 0; repeatAll-- {
+			jobsWithRepeat = append(jobsWithRepeat, jobs...)
+		}
+
+		return jobsWithRepeat, nil
+	}
 	return jobs, nil
 }
 

@@ -14,8 +14,11 @@ Spread
 [Rebooting](#rebooting)  
 [Timeouts](#timeouts)  
 [Fast iterations with reuse](#reuse)  
-[Debugging](#debugging)  
+[Debugging](#debugging)
+[Verbosity](#verbosity)
 [Repeating tasks](#repeating)
+[Define number of Workers](#workers)
+[Tagging tasks](#tagging)
 [Passwords and usernames](#passwords)  
 [Including, excluding, and renaming files](#including)  
 [Selecting which tasks to run](#selecting)  
@@ -518,6 +521,21 @@ In a similar way to prepare and restore scripts, these can also be defined
 as a `debug-each` script at the project, backend, and suite levels, so they
 are aggregated and repeated for every task under them.
 
+<a name="verbosity"/>
+
+## Verbosity
+
+The option `-v` displayes basic information about the current spread execution
+and its progress.
+
+The output of the tasks performed can be displayed by using the option
+`-vv`. By using this option spread shows output for a task when it doesn't fail,
+that sometimes it is needed for debugging, tracing, etc.
+
+To see debug information about all the communication done by spread the option
+`-vvv` may be used. This option displays all the low level messages done by spread
+interacting with the backends and systems.
+
 
 <a name="ordering">
 
@@ -562,14 +580,46 @@ To do that there is an option `-repeat` which receives an integer indicating
 the number of reexecutions to do, being 0 the default value.
 
 
+<a name="tagging"/>
+
+## Tagging tasks
+
+Tagging tasks is an easy way to define group of tasks. Each task can be
+tagged with a set of tags which should describe it.
+
+The following example shows how a task can be identified to be executed either
+in an offline environment or as part of the smoke test.
+```
+tags: [offline, smoke-test]
+```
+
+To filter the executions by group of tasks which are tagged with the same tag
+there is an option `-tag` which receives a string which is the tag name.
+```
+$ spread -tag smoke-test ...
+```
+
+When a tag is used to filter tests, just the tests with that tag will be executed.
+
+<a name="workers"/>
+
+## Define number of Workers
+
+The number of workers can be set as part of the spread.yaml file and also by
+using the `-workers` option, which receives an integer indicating
+the number of workers used by all the systems selected for the run.
+
+In case the `-workers` option is not used, the number of workers used is the
+provided for the system in the spread.yaml which is 1 by default.
+
 <a name="passwords">
 
 ## Passwords and usernames
 
 To keep things simple and convenient, Spread prepares systems to connect over SSH
-as the root user using a single password for all systems. Unless explicitly defined
-via the `-pass` command line option, the password will be random and different on
-each run.
+as the root user using a single password for all systems. Unless explicitly defined either
+via the `-pass` command line option or via setting the cert field for the system.
+The password will be random and different on each run.
 
 Some of the supported backends may be unable to provide an image with the correct
 password in place, or with the correct SSH configuration for root to connect. In
@@ -586,12 +636,18 @@ backends:
             - ubuntu-16.04:
                 username: ubuntu
                 password: ubuntu
+            - ubuntu-core-16-64:
+                username: ubuntu
+                ssh-rsa-key: ~/.ssh/id_rsa
 ```
 
 If the password field is defined without a username, it specifies the password
 for root to connect over SSH.  If both username and password are provided,
 the credentials will be used to connect to the system, and password-less sudo
 must be available for the provided user.
+
+When the ssh-rsa-key field is set, spread uses the ssh key to stablish the
+connection. In this scenario the password is not considered.
 
 In all cases the end result is the same: a system that executes scripts as root.
 

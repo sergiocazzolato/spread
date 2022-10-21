@@ -2,8 +2,8 @@ package spread
 
 import (
 	"time"
-
 	"golang.org/x/crypto/ssh"
+	"net/http"
 )
 
 func MockClient() *Client {
@@ -35,6 +35,19 @@ func MockSshDial(f func(network, addr string, config *ssh.ClientConfig) (*ssh.Cl
 	return func() {
 		sshDial = oldSshDial
 	}
+}
+
+func NewGoogleProviderForTesting(mockApiURL string, p *Project, b *Backend, o *Options) *googleProvider {
+	provider := Google(p, b, o)
+	ggl := provider.(*googleProvider)
+	ggl.apiURL = mockApiURL
+	ggl.keyChecked = true
+	ggl.client = &http.Client{}
+	return ggl
+}
+
+func (p *googleProvider) ProjectImages(project string) ([]googleImage, error) {
+	return p.projectImages(project)
 }
 
 var QemuCmd = qemuCmd
