@@ -432,7 +432,7 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 	} else {
 		// Prevent any commands attempting to read from stdin to consume
 		// the shell script itself being sent to bash via its stdin.
-		printcmd := "awk '{ print strftime(\"%F %T -> \"), $0; fflush(); }'"
+		printcmd := "sed -u 's/%/%%/g' | xargs -I {} date +'%Y-%m-%d %H:%M:%S.%3N -> {}'"
 		fmt.Fprintf(&buf, "\n(\n%s\n) | %s\n", script, printcmd)
 	}
 
