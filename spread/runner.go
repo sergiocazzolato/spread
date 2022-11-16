@@ -25,6 +25,7 @@ type Options struct {
 	Reuse          bool
 	ReusePid       int
 	Debug          bool
+	NoDebug        bool
 	Shell          bool
 	ShellBefore    bool
 	ShellAfter     bool
@@ -505,7 +506,7 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 			output, err := client.Trace(debug, dir, job.Environment)
 			if err != nil {
 				printft(start, startTime|endTime|startFold|endFold, "Error debugging %s (%s) : %v", contextStr, server.Label(), err)
-			} else if len(output) > 0 {
+			} else if len(output) > 0 && ! r.options.NoDebug {
 				printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
 			}
 		}
