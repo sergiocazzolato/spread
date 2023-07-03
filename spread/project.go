@@ -65,6 +65,10 @@ type Backend struct {
 	Storage  Size
 	Disks    int
 
+	// Only for Openstack so far
+	Network        string
+	SecurityGroups []string `yaml:"security-groups"`
+
 	Systems SystemsMap
 
 	Prepare     string
@@ -124,6 +128,10 @@ type System struct {
 	// Only for Linode and Google so far.
 	Storage Size
 	Disks   int
+
+	// Only for Openstack so far
+	Network        string
+	SecurityGroups []string `yaml:"security-groups"`
 
 	// Only for Google so far.
 	SecureBoot bool `yaml:"secure-boot"`
@@ -533,7 +541,7 @@ func Load(path string) (*Project, error) {
 			backend.Type = bname
 		}
 		switch backend.Type {
-		case "google", "linode", "lxd", "qemu", "adhoc", "humbox":
+		case "google", "linode", "lxd", "qemu", "adhoc", "humbox", "openstack":
 		default:
 			return nil, fmt.Errorf("%s has unsupported type %q", backend, backend.Type)
 		}
@@ -552,6 +560,7 @@ func Load(path string) (*Project, error) {
 		backend.RestoreEach = strings.TrimSpace(backend.RestoreEach)
 		backend.DebugEach = strings.TrimSpace(backend.DebugEach)
 
+		// Cascade the backend parameters to the systems
 		for sysname, system := range backend.Systems {
 			system.Backend = backend.Name
 			if system.Workers < 0 {
@@ -568,6 +577,12 @@ func Load(path string) (*Project, error) {
 			}
 			if system.Plan == "" {
 				system.Plan = backend.Plan
+			}
+			if system.Network == "" {
+				system.Network = backend.Network
+			}
+			if len(system.SecurityGroups) == 0 {
+				system.SecurityGroups = backend.SecurityGroups
 			}
 			if err := checkEnv(system, &system.Environment); err != nil {
 				return nil, err
