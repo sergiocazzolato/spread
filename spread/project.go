@@ -134,6 +134,9 @@ type System struct {
 	// Specify a backend specific plan, e.g. `e2-standard-2`
 	Plan string
 
+	// Specify a backend specific location, e.g. `us-west1-a`
+	Location string
+
 	Environment *Environment
 	Variants    []string
 
@@ -561,6 +564,9 @@ func Load(path string) (*Project, error) {
 			}
 			if system.Plan == "" {
 				system.Plan = backend.Plan
+			}
+			if system.Location == "" {
+				system.Location = backend.Location
 			}
 			if err := checkEnv(system, &system.Environment); err != nil {
 				return nil, err
