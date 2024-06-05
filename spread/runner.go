@@ -14,9 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/tomb.v2"
 	"math"
 	"math/rand"
+
+	"gopkg.in/tomb.v2"
 )
 
 type Options struct {
@@ -435,6 +436,33 @@ const (
 	restoring = "restoring"
 )
 
+func (r *Runner) saveDebugOutput(file string, output []byte) error {
+	path := filepath.Join(r.project.Path, file)
+
+	// create the output job file.
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("cannot create debug output file: %v", err)
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+		}
+	}()
+
+	// Build the output to write the the file
+	var buffer bytes.Buffer
+	buffer.Write(output)
+
+	// write the output into the job file.
+	_, err = f.Write(buffer.Bytes())
+	if err != nil {
+		return fmt.Errorf("cannot write result debug output in file: %v", err)
+	}
+
+	return nil
+}
+
 func (r *Runner) run(client *Client, job *Job, verb string, context interface{}, script, debug string, abend *bool) bool {
 	script = strings.TrimSpace(script)
 	server := client.Server()
@@ -486,8 +514,18 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 			output, err := client.Trace(debug, dir, job.Environment)
 			if err != nil {
 				printft(start, startTime|endTime|startFold|endFold, "Error debugging %s (%s) : %v", contextStr, server.Label(), err)
-			} else if len(output) > 0 && ! r.options.NoDebug {
-				printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
+			} else if len(output) > 0 {
+				if r.options.NoDebug {
+					debugFile := job.Backend.Name + "_" + job.System.Name + "_" + strings.Replace(job.Task.Name, "/", "_", -1) + ".debug.log"
+					outputMsg := "saved to file " + debugFile
+					err = r.saveDebugOutput(debugFile, output)
+					if err != nil {
+						printft(start, startTime|endTime|startFold|endFold, "Error saving debug output to file %s", debugFile, err)
+					}
+					printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr([]byte(outputMsg), nil))
+				} else {
+					printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
+				}
 			}
 		}
 		if r.options.Debug || r.options.ShellAfter {
