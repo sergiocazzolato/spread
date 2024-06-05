@@ -14,9 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/tomb.v2"
 	"math"
 	"math/rand"
+
+	"gopkg.in/tomb.v2"
 )
 
 type Options struct {
@@ -25,6 +26,7 @@ type Options struct {
 	Reuse          bool
 	ReusePid       int
 	Debug          bool
+	NoDebug        bool
 	Shell          bool
 	ShellBefore    bool
 	ShellAfter     bool
@@ -33,6 +35,7 @@ type Options struct {
 	Resend         bool
 	Discard        bool
 	Artifacts      string
+	Logs           string
 	Seed           int64
 	Repeat         int
 	GarbageCollect bool
@@ -490,7 +493,20 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 			if err != nil {
 				printft(start, startTime|endTime|startFold|endFold, "Error debugging %s (%s) : %v", contextStr, server.Label(), err)
 			} else if len(output) > 0 {
-				printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
+				if r.options.NoDebug {
+					outputMsg := "no output"
+					if r.options.Logs != "" {
+						filename := job.Backend.Name + "_" + job.System.Name + "_" + strings.Replace(job.Task.Name, "/", "_", -1) + ".debug.log"
+						err = saveLog(r.options.Logs, filename, output)
+						if err != nil {
+							printft(start, startTime|endTime|startFold|endFold, "Error saving debug output to file %s", filepath.Join(r.options.Logs, filename), err)
+						}
+						outputMsg = "saved to file " + filepath.Join(r.options.Logs, filename)
+					}
+					printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr([]byte(outputMsg), nil))
+				} else {
+					printft(start, startTime|endTime|startFold|endFold, "Debug output for %s (%s) : %v", contextStr, server.Label(), outputErr(output, nil))
+				}
 			}
 		}
 		if r.options.Debug || r.options.ShellAfter {
