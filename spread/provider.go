@@ -1,12 +1,16 @@
 package spread
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"time"
 
-	"golang.org/x/net/context"
 	"regexp"
+
+	"golang.org/x/net/context"
 )
 
 var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -68,4 +72,40 @@ func removedSystem(backend *Backend, sysname string) *System {
 		Name:    sysname,
 		Image:   sysname,
 	}
+}
+
+func saveLog(dir string, filename string, output []byte) error {
+	path := filename
+	if dir != "" {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			err := os.MkdirAll(dir, 0755)
+			if err != nil {
+				return fmt.Errorf("failed to create logs dir: %v", err)
+			}
+		}
+		path = filepath.Join(dir, filename)
+	}
+
+	// create the log file.
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("cannot create log file: %v", err)
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+		}
+	}()
+
+	// Build the output to write the log file
+	var buffer bytes.Buffer
+	buffer.Write(output)
+
+	// write the output into the log file.
+	_, err = f.Write(buffer.Bytes())
+	if err != nil {
+		return fmt.Errorf("cannot write output to file: %v", err)
+	}
+
+	return nil
 }
