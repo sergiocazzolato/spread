@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -41,8 +40,8 @@ type TestFlingerJob struct {
 }
 
 type TestFlingerJobData struct {
-	Name 	  string
-	JobId 	  string    `json:"job_id"`
+	Name      string
+	JobId     string    `json:"job_id"`
 	CreatedAt time.Time `json:"created_at"`
 	JobState  string    `json:"job_state"`
 }
@@ -51,7 +50,7 @@ type TestFlingerRequestData struct {
 	Queue          string                      `json:"job_queue"`
 	ProvisionDdata TestFlingerProvisioningData `json:"provision_data"`
 	AllocateData   TestFlingerAllocateData     `json:"allocate_data"`
-	Tags           []string   				   `json:"tags"`
+	Tags           []string                    `json:"tags"`
 }
 
 type TestFlingerProvisioningData struct {
@@ -68,8 +67,8 @@ type TestFlingerJobResponse struct {
 }
 
 type TestFlingerJobInfoResponse struct {
-	JobId string  `json:"job_id"`
-	Tags []string `json:"tags"`
+	JobId string   `json:"job_id"`
+	Tags  []string `json:"tags"`
 }
 
 type TestFlingerDeviceInfo struct {
@@ -160,7 +159,7 @@ func (p *TestFlingerProvider) GarbageCollect() error {
 		}
 
 		var result TestFlingerJobInfoResponse
-		err := p.do("GET", "/job/" + s.d.JobId , nil, &result)
+		err := p.do("GET", "/job/"+s.d.JobId, nil, &result)
 		if err != nil {
 			return fmt.Errorf("cannot get instance info: %v", err)
 		}
@@ -230,9 +229,11 @@ func (p *TestFlingerProvider) Allocate(ctx context.Context, system *System) (Ser
 	}
 	err = p.waitDeviceBoot(ctx, s)
 	if err != nil {
-		saveErr := p.saveJobOutput(ctx, s)
-		if saveErr != nil {
-			return nil, fmt.Errorf("Error saving job result output: %v", err)
+		if p.options.Logs != "" {
+			saveErr := p.saveJobOutput(ctx, s)
+			if saveErr != nil {
+				return nil, fmt.Errorf("Error saving job result output: %v", err)
+			}
 		}
 		return nil, err
 	}
@@ -243,16 +244,16 @@ func (p *TestFlingerProvider) requestDevice(ctx context.Context, system *System)
 	image := system.Image
 	queue := TestFlingerQueue(system)
 
-	pdata := TestFlingerProvisioningData{Url: image,}
+	pdata := TestFlingerProvisioningData{Url: image}
 	// In case the image is a url, then the provisioning data is used with url,
 	// otherwise it is used with distro
 	_, err := url.ParseRequestURI(image)
 	if err != nil {
-		pdata = TestFlingerProvisioningData{Distro: image,}
+		pdata = TestFlingerProvisioningData{Distro: image}
 	}
 
 	data := &TestFlingerRequestData{
-		Queue: queue,
+		Queue:          queue,
 		ProvisionDdata: pdata,
 		AllocateData: TestFlingerAllocateData{
 			Allocate: true,
@@ -329,7 +330,7 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 		if state == CANCELLED || state == COMPLETE || state == COMPLETED {
 			return fmt.Errorf("Job state is either cancelled or completed")
 		}
-		
+
 		select {
 		case <-retry.C:
 		case <-warn.C:
@@ -356,36 +357,22 @@ func (p *TestFlingerProvider) saveJobOutput(ctx context.Context, s *TestFlingerJ
 		return nil
 	}
 
-	// Use the last part of the uuid to identify the file
-	uuidParts := strings.Split(s.d.JobId, "-")
-	outputFile := fmt.Sprintf(".spread-output.%s.log", uuidParts[len(uuidParts)-1])
-	path := filepath.Join(p.project.Path, outputFile)
+	// Use the uuid to identify the file
+	resultsFile := s.d.JobId + "_result.log"
 
-	// create hte output job file.
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("cannot create result output file: %v", err)
-	}
-	defer func() {
-		if err != nil {
-			f.Close()
-		}
-	}()
-
-	// Build the output to write the the file
+	// Build the output to write to the log
 	var buffer bytes.Buffer
-    buffer.WriteString(resRes.ReserveOutput)
-    buffer.WriteString(resRes.AllocateOutput)
-    buffer.WriteString(resRes.SetupOutput)
-    buffer.WriteString(resRes.ProvisionOutput)
+	buffer.WriteString(resRes.ReserveOutput)
+	buffer.WriteString(resRes.AllocateOutput)
+	buffer.WriteString(resRes.SetupOutput)
+	buffer.WriteString(resRes.ProvisionOutput)
 
-    // write the output into the job file.
-	_, err = f.Write(buffer.Bytes())
+	err = saveLog(p.options.Logs, resultsFile, buffer.Bytes())
 	if err != nil {
-		return fmt.Errorf("cannot write result output message: %v", err)
+		return err
 	}
 
-	printf("Job %s result output saved to file %s", s.d.JobId, outputFile)
+	printf("Job %s result output saved to file %s", s.d.JobId, resultsFile)
 	return nil
 }
 
@@ -409,13 +396,13 @@ func (p *TestFlingerProvider) do(method, subpath string, params interface{}, res
 
 	url := os.Getenv("TF_ENDPOINT")
 	version := os.Getenv("TF_API_VERSION")
-    if len(url) == 0 {
-        url = "https://testflinger.canonical.com"
-    }
-    if len(version) == 0 {
-        version = "v1"
-    }
-    url += "/" + version + subpath
+	if len(url) == 0 {
+		url = "https://testflinger.canonical.com"
+	}
+	if len(version) == 0 {
+		version = "v1"
+	}
+	url += "/" + version + subpath
 
 	// Repeat on 500s. Note that Google's 500s may come in late, as a marshaled error
 	// under a different code. See the INTERNAL handling at the end below.
@@ -433,11 +420,11 @@ func (p *TestFlingerProvider) do(method, subpath string, params interface{}, res
 			time.Sleep(time.Duration(delays[i]) * 250 * time.Millisecond)
 			continue
 		}
-		
+
 		if err != nil {
 			return fmt.Errorf("cannot perform TestFlinger request: %v", err)
 		}
-		
+
 		data, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return fmt.Errorf("cannot read TestFlinger response: %v", err)
