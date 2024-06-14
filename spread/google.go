@@ -18,10 +18,11 @@ import (
 	"golang.org/x/oauth2/google"
 	"golang.org/x/oauth2/jwt"
 
-	"github.com/niemeyer/pretty"
 	"regexp"
 	"strconv"
 	"unicode"
+
+	"github.com/niemeyer/pretty"
 )
 
 func Google(p *Project, b *Backend, o *Options) Provider {
@@ -156,7 +157,8 @@ echo root:%s | chpasswd
 sed -i 's/^\s*#\?\s*\(PermitRootLogin\|PasswordAuthentication\)\>.*/\1 yes/' /etc/ssh/sshd_config
 sed -i 's/^PermitRootLogin=/#PermitRootLogin=/g' /etc/ssh/sshd_config.d/* || true
 sed -i 's/^PasswordAuthentication=/#PasswordAuthentication=/g' /etc/ssh/sshd_config.d/* || true
-test -d /etc/ssh/sshd_config.d && echo -e 'PermitRootLogin=yes\nPasswordAuthentication=yes' > /etc/ssh/sshd_config.d/00-spread.conf
+test -d /etc/ssh/sshd_config.d && echo 'PermitRootLogin=yes' > /etc/ssh/sshd_config.d/00-spread.conf
+test -d /etc/ssh/sshd_config.d && echo 'PasswordAuthentication=yes' >> /etc/ssh/sshd_config.d/00-spread.conf
 
 pkill -o -HUP sshd || true
 
