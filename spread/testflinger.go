@@ -125,7 +125,7 @@ func (s *TestFlingerJob) Discard(ctx context.Context) error {
 	}
 	err := s.p.do("POST", "/job/"+s.d.JobId+"/action", data, nil)
 	if err != nil {
-		return fmt.Errorf("Error discarding job: %v: ", err)
+		return fmt.Errorf("error discarding job: %v: ", err)
 	}
 	return nil
 }
@@ -230,9 +230,9 @@ func (p *TestFlingerProvider) Allocate(ctx context.Context, system *System) (Ser
 	err = p.waitDeviceBoot(ctx, s)
 	if err != nil {
 		if p.options.Logs != "" {
-			saveErr := p.saveJobOutput(ctx, s)
+			saveErr := p.saveJobOutput(s)
 			if saveErr != nil {
-				return nil, fmt.Errorf("Error saving job result output: %v", err)
+				return nil, fmt.Errorf("error saving job result output: %v", err)
 			}
 		}
 		return nil, err
@@ -270,13 +270,13 @@ func (p *TestFlingerProvider) requestDevice(ctx context.Context, system *System)
 	// First step is to get the job_id running the submit command
 	jobId := ""
 	if err != nil {
-		return nil, fmt.Errorf("Error creating job: %v: ", err)
+		return nil, fmt.Errorf("error creating job: %v: ", err)
 	}
 	if p.validJobId(jobRes.JobId) {
 		jobId = jobRes.JobId
 		printf("TestFlinger job %s created for system %s", jobId, system.Name)
 	} else {
-		return nil, fmt.Errorf("Failed to retrieve job id: %s", jobRes.JobId)
+		return nil, fmt.Errorf("failed to retrieve job id: %s", jobRes.JobId)
 	}
 
 	s := &TestFlingerJob{
@@ -305,13 +305,13 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 		err := p.do("GET", "/result/"+s.d.JobId, nil, &resRes)
 
 		if err != nil {
-			return fmt.Errorf("Error requesting job status: %v", err)
+			return fmt.Errorf("error requesting job status: %v", err)
 		}
 		state := ""
 		if resRes.JobState != "" {
 			state = resRes.JobState
 		} else {
-			return fmt.Errorf("Failed to retrieve job state")
+			return fmt.Errorf("failed to retrieve job state")
 		}
 
 		// allocated stated means the ip for the device available
@@ -319,7 +319,7 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 			if resRes.DeviceInfo.DeviceIP != "" {
 				s.address = resRes.DeviceInfo.DeviceIP
 				if net.ParseIP(s.address) == nil {
-					return fmt.Errorf("Wrong ip format %s: ", s.address)
+					return fmt.Errorf("wrong ip format %s: ", s.address)
 				}
 				printf("Allocated device with ip %s", s.address)
 				return nil
@@ -328,7 +328,7 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 
 		// The job_id is not active anymore
 		if state == CANCELLED || state == COMPLETE || state == COMPLETED {
-			return fmt.Errorf("Job state is either cancelled or completed")
+			return fmt.Errorf("job state is either cancelled or completed")
 		}
 
 		select {
@@ -337,18 +337,16 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 			printf("Job %s for device % s is in state %s", s.d.JobId, s.d.Name, state)
 		case <-timeout.C:
 			s.Discard(ctx)
-			return fmt.Errorf("Wait timeout reached, job discarded")
+			return fmt.Errorf("wait timeout reached, job discarded")
 		}
 	}
-
-	return fmt.Errorf("ip address not found")
 }
 
-func (p *TestFlingerProvider) saveJobOutput(ctx context.Context, s *TestFlingerJob) error {
+func (p *TestFlingerProvider) saveJobOutput(s *TestFlingerJob) error {
 	var resRes TestFlingerResultResponse
 	err := p.do("GET", "/result/"+s.d.JobId, nil, &resRes)
 	if err != nil {
-		return fmt.Errorf("Error requesting result output for job: %v", err)
+		return fmt.Errorf("error requesting result output for job: %v", err)
 	}
 
 	state := resRes.JobState
@@ -358,7 +356,7 @@ func (p *TestFlingerProvider) saveJobOutput(ctx context.Context, s *TestFlingerJ
 	}
 
 	// Use the uuid to identify the file
-	resultsFile := s.d.JobId + "_result.log"
+	resultsFile := s.d.JobId + ".result.log"
 
 	// Build the output to write to the log
 	var buffer bytes.Buffer
@@ -372,7 +370,7 @@ func (p *TestFlingerProvider) saveJobOutput(ctx context.Context, s *TestFlingerJ
 		return err
 	}
 
-	printf("Job %s result output saved to file %s", s.d.JobId, resultsFile)
+	printf("Allocation output for job %s saved to %s/%s", s.d.JobId, p.options.Logs, resultsFile)
 	return nil
 }
 

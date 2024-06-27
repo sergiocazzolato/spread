@@ -1,6 +1,7 @@
 package spread
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -358,6 +359,29 @@ func (p *openstackProvider) findSecurityGroupNames(names []string) ([]nova.Secur
 var openstackProvisionTimeout = 3 * time.Minute
 var openstackProvisionRetry = 5 * time.Second
 
+func (p *openstackProvider) saveProvisioningOutput(s *openstackServer, detail *nova.ServerDetail) error {
+	// output is saved just if the status is error and fault object set
+	if detail.Status != nova.StatusError || detail.Fault == nil {
+		return nil
+	}
+
+	// Use the name to identify the file
+	resultsFile := s.d.Name + ".result.log"
+
+	// Build the output to write to the log
+	var buffer bytes.Buffer
+	buffer.WriteString(detail.Fault.Message)
+	buffer.WriteString(detail.Fault.Details)
+
+	err := saveLog(p.options.Logs, resultsFile, buffer.Bytes())
+	if err != nil {
+		return err
+	}
+
+	printf("Allocation output for instance %s saved to %s/%s", s.d.Name, p.options.Logs, resultsFile)
+	return nil
+}
+
 func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServer) error {
 	debugf("Waiting for %s to provision...", s)
 
@@ -378,7 +402,14 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 			}
 			if server.Status != nova.StatusBuild {
 				if server.Status != nova.StatusActive {
-					return fmt.Errorf("cannot use server: status is not active but %s", server.Status)
+					if p.options.Logs != "" {
+						// Use the uuid to identify the file
+						err = p.saveProvisioningOutput(s, server)
+						if err != nil {
+							return fmt.Errorf("error saving provisioning result output: %v", err)
+						}
+					}
+					return fmt.Errorf("server status is %s", server.Status)
 				}
 				return nil
 			}
@@ -386,7 +417,6 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 			return fmt.Errorf("cannot wait for %s to provision: interrupted", s)
 		}
 	}
-	panic("unreachable")
 }
 
 var openstackServerBootTimeout = 2 * time.Minute
@@ -404,7 +434,7 @@ func (p *openstackProvider) waitServerBootSSH(ctx context.Context, s *openstackS
 		addr += ":22"
 	}
 
-	// Iterate until the ssh connection to the host can be stablished
+	// Iterate until the ssh connection to the host can be established
 	// In openstack the client cannot access to the serial console of the instance
 	timeout := time.After(openstackServerBootTimeout)
 	retry := time.NewTicker(openstackServerBootRetry)
@@ -489,7 +519,6 @@ func (p *openstackProvider) waitServerBootSerial(ctx context.Context, s *opensta
 			return fmt.Errorf("cannot wait for %s to boot: interrupted", s)
 		}
 	}
-	panic("unreachable")
 }
 
 func (p *openstackProvider) waitServerBoot(ctx context.Context, s *openstackServer) error {
@@ -643,9 +672,9 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 	}
 	if err != nil {
 		if p.removeMachine(ctx, s) != nil {
-			return nil, &FatalError{fmt.Errorf("cannot allocate or deallocate (!) new Openstack server %s: %v", s, err)}
+			return nil, &FatalError{fmt.Errorf("cannot allocate or deallocate (!) new Openstack server %s: %v", s.d.Name, err)}
 		}
-		return nil, &FatalError{fmt.Errorf("cannot allocate new Openstack server %s: %v", s, err)}
+		return nil, &FatalError{fmt.Errorf("cannot allocate new Openstack server %s: %v", s.d.Name, err)}
 	}
 
 	return s, nil
@@ -755,7 +784,7 @@ func (p *openstackProvider) checkKey() error {
 			return &FatalError{fmt.Errorf("cannot retrieve credentials from env: %v", err)}
 		}
 
-		// Select the appropiate authentication method
+		// Select the appropriate authentication method
 		var authmode identity.AuthMode
 		if os.Getenv("OS_ACCESS_KEY") != "" && os.Getenv("OS_SECRET_KEY") != "" {
 			authmode = identity.AuthKeyPair
