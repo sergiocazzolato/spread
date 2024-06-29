@@ -8,7 +8,7 @@
 project: spread
 
 environment:
-    GOVERSION: 1.13.8
+    GOVERSION: 1.22.4
     GOHOME: /home/test
     GOPATH: $GOHOME
     PATH: $GOHOME/bin:$PATH
