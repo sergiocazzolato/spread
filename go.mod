@@ -17,12 +17,13 @@ require (
 
 require (
 	cloud.google.com/go v0.65.0 // indirect
-	github.com/go-goose/goose v2.0.1+incompatible // indirect
 	github.com/golang/protobuf v1.4.2 // indirect
 	github.com/juju/collections v0.0.0-20220203020748-febd7cad8a7a // indirect
+	github.com/kr/pretty v0.2.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	golang.org/x/sys v0.0.0-20210615035016-665e8c7367d1 // indirect
 	golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1 // indirect
+	golang.org/x/text v0.3.6 // indirect
 	google.golang.org/appengine v1.6.6 // indirect
 	google.golang.org/protobuf v1.25.0 // indirect
 )
