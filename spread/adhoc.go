@@ -50,6 +50,10 @@ func (s *adhocServer) ReuseData() interface{} {
 	return nil
 }
 
+func (s *adhocServer) SerialOutput() (string, error) {
+	return "", nil
+}
+
 func (s *adhocServer) Discard(ctx context.Context) error {
 	_, err := s.p.run(s.p.backend.Discard, s.system, s.address)
 	if err != nil {

@@ -82,6 +82,10 @@ func (s *humboxServer) ReuseData() interface{} {
 	return &s.d
 }
 
+func (s *humboxServer) SerialOutput() (string, error) {
+	return "", nil
+}
+
 func (p *humboxProvider) Backend() *Backend {
 	return p.backend
 }

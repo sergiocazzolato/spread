@@ -27,6 +27,7 @@ type Server interface {
 	Address() string
 	Discard(ctx context.Context) error
 	ReuseData() interface{}
+	SerialOutput() (string, error)
 	System() *System
 	Label() string
 	String() string

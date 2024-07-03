@@ -108,6 +108,39 @@ func (s *openstackServer) ReuseData() interface{} {
 	return &s.d
 }
 
+var openstackSerialOutputTimeout = 30 * time.Second
+var openstackSerialConsoleErr = fmt.Errorf("cannot get console output")
+
+func (s *openstackServer) SerialOutput() (string, error) {
+	url := fmt.Sprintf("servers/%s/action", s.d.Id)
+
+	var req struct {
+		OsGetSerialConsole struct{} `json:"os-getConsoleOutput"`
+	}
+	var resp struct {
+		Output string `json:"output"`
+	}
+	requestData := goosehttp.RequestData{ReqValue: req, RespValue: &resp, ExpectedStatus: []int{http.StatusOK}}
+	timeout := time.After(openstackSerialOutputTimeout)
+	retry := time.NewTicker(openstackServerBootRetry)
+	defer retry.Stop()
+
+	for {
+		err := s.p.osClient.SendRequest("POST", "compute", "v2", url, &requestData)
+		if err != nil {
+			debugf("failed to retrieve the serial console for server %s: %v", s, err)
+		}
+		if len(resp.Output) > 0 {
+			return resp.Output, nil
+		}
+		select {
+		case <-retry.C:
+		case <-timeout:
+			return "", fmt.Errorf("failed to retrieve the serial console for server %s: timeout reached", s)
+		}
+	}
+}
+
 const (
 	openstackStaging      = "STAGING"
 	openstackProvisioning = "PROVISIONING"
@@ -456,40 +489,6 @@ func (p *openstackProvider) waitServerBootSSH(ctx context.Context, s *openstackS
 	}
 }
 
-var openstackSerialOutputTimeout = 30 * time.Second
-
-func (p *openstackProvider) getSerialConsoleOutput(s *openstackServer) (string, error) {
-	url := fmt.Sprintf("servers/%s/action", s.d.Id)
-
-	var req struct {
-		OsGetSerialConsole struct{} `json:"os-getConsoleOutput"`
-	}
-	var resp struct {
-		Output string `json:"output"`
-	}
-	requestData := goosehttp.RequestData{ReqValue: req, RespValue: &resp, ExpectedStatus: []int{http.StatusOK}}
-	timeout := time.After(openstackSerialOutputTimeout)
-	retry := time.NewTicker(openstackServerBootRetry)
-	defer retry.Stop()
-
-	for {
-		err := p.osClient.SendRequest("POST", "compute", "v2", url, &requestData)
-		if err != nil {
-			debugf("failed to retrieve the serial console for server %s: %v", s, err)
-		}
-		if len(resp.Output) > 0 {
-			return resp.Output, nil
-		}
-		select {
-		case <-retry.C:
-		case <-timeout:
-			return "", fmt.Errorf("failed to retrieve the serial console for server %s: timeout reached", s)
-		}
-	}
-}
-
-var openstackSerialConsoleErr = fmt.Errorf("cannot get console output")
-
 func (p *openstackProvider) waitServerBootSerial(ctx context.Context, s *openstackServer) error {
 	timeout := time.After(openstackServerBootTimeout)
 	relog := time.NewTicker(60 * time.Second)
@@ -499,7 +498,7 @@ func (p *openstackProvider) waitServerBootSerial(ctx context.Context, s *opensta
 
 	var marker = openstackReadyMarker
 	for {
-		resp, err := p.getSerialConsoleOutput(s)
+		resp, err := s.SerialOutput()
 		if err != nil {
 			return fmt.Errorf("%w: %v", openstackSerialConsoleErr, err)
 		}

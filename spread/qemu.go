@@ -59,6 +59,10 @@ func (s *qemuServer) ReuseData() interface{} {
 	return &s.d
 }
 
+func (s *qemuServer) SerialOutput() (string, error) {
+	return "", nil
+}
+
 func (s *qemuServer) Discard(ctx context.Context) error {
 	p, err := os.FindProcess(s.d.PID)
 	if err != nil {

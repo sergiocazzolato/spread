@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v2"
 
 	"golang.org/x/net/context"
 )
@@ -62,6 +63,10 @@ func (s *lxdServer) System() *System {
 
 func (s *lxdServer) ReuseData() interface{} {
 	return &s.d
+}
+
+func (s *lxdServer) SerialOutput() (string, error) {
+	return "", nil
 }
 
 func (s *lxdServer) Discard(ctx context.Context) error {

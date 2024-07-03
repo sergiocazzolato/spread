@@ -141,6 +141,10 @@ func (s *linodeServer) ReuseData() interface{} {
 	return &s.d
 }
 
+func (s *linodeServer) SerialOutput() (string, error) {
+	return "", nil
+}
+
 func (s *linodeServer) watch() {
 	s.watchTomb.Go(s.watchLoop)
 }

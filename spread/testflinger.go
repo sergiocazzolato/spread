@@ -119,6 +119,10 @@ func (s *TestFlingerJob) ReuseData() interface{} {
 	return &s.d
 }
 
+func (s *TestFlingerJob) SerialOutput() (string, error) {
+	return "", nil
+}
+
 func (s *TestFlingerJob) Discard(ctx context.Context) error {
 	data := &TestFlingerActionData{
 		Action: "cancel",
