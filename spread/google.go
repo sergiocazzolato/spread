@@ -852,13 +852,17 @@ func (p *googleProvider) checkKey() error {
 				creds, err = google.CredentialsFromJSON(ctx, raw, googleScope)
 			}
 
-			// identify service account if possible
-			p.serviceAccount, err = serviceAccountFromKey(raw)
 		} else {
 			// none provided, let the google library find whatever
 			// is appropriate
 			creds, err = google.FindDefaultCredentials(ctx, googleScope)
 		}
+
+		if err == nil {
+			// identify service account if possible
+			p.serviceAccount, err = serviceAccountFromKey(creds.JSON)
+		}
+
 		if err == nil {
 			p.client = oauth2.NewClient(ctx, creds.TokenSource)
 		}
