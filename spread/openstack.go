@@ -627,13 +627,34 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 
 	opts := nova.RunServerOpts{
 		Name:             name,
-		FlavorId:         flavor.Id,
 		ImageId:          image.Id,
+		FlavorId:         flavor.Id,
 		AvailabilityZone: availabilityZone.Name,
 		Networks:         networks,
 		Metadata:         tags,
 		UserData:         []byte(cloudconfig),
 	}
+
+	// When the storage size is defined, then we use the volume generated
+	// with the source image. Otherwise we boot in an ephemeral disk the
+	// image using the size described in the flavor
+	storage := image.MinimumDisk
+	if system.Storage != 0 {
+		storage = int(system.Storage / gb)
+	}
+	// We use 20 GB as default value for the storage size
+	if storage == 0 {
+		storage = 20
+	}
+
+	opts.BlockDeviceMappings = []nova.BlockDeviceMapping{{
+		BootIndex:           0,
+		SourceType:          "image",
+		UUID:                image.Id,
+		DestinationType:     "volume",
+		VolumeSize:          storage,
+		DeleteOnTermination: true,
+	}}
 
 	if len(system.Groups) > 0 {
 		sgNames, err := p.findSecurityGroupNames(system.Groups)
@@ -714,6 +735,7 @@ func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServe
 	if err != nil {
 		return fmt.Errorf("cannot remove openstack instance: %v", &openstackError{err})
 	}
+
 	return err
 }
 
@@ -796,6 +818,7 @@ func (p *openstackProvider) checkKey() error {
 			return &FatalError{fmt.Errorf("cannot determine authentication method to use")}
 		}
 
+		// Create auth client
 		authClient := gooseclient.NewClient(cred, authmode, nil)
 		err = authClient.Authenticate()
 		if err != nil {
