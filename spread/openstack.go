@@ -236,8 +236,7 @@ func (e *openstackError) cause(errMsg string) string {
 	}
 	lastCausedBy := causedBy[len(causedBy)-1]
 	firstErrLine := strings.SplitN(lastCausedBy, "\n", 2)[0]
-	stripErrPart := strings.SplitN(firstErrLine, "; error info:", 2)[0]
-	return strings.TrimSpace(stripErrPart)
+	return strings.TrimSpace(firstErrLine)
 }
 
 func (e *openstackError) Error() string {
