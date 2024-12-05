@@ -4,6 +4,7 @@ go 1.22.4
 
 require (
 	github.com/go-goose/goose/v5 v5.0.0-20230421180421-abaee9096e3a
+	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e
 	golang.org/x/crypto v0.0.0-20211215153901-e495a2d5b3d3

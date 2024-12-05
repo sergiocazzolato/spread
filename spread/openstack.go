@@ -19,6 +19,7 @@ import (
 	"github.com/go-goose/goose/v5/neutron"
 	"github.com/go-goose/goose/v5/nova"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/context"
@@ -646,10 +647,11 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 		storage = 20
 	}
 
+	deviceUUID := uuid.New().String()
 	opts.BlockDeviceMappings = []nova.BlockDeviceMapping{{
 		BootIndex:           0,
 		SourceType:          "image",
-		UUID:                image.Id,
+		UUID:                deviceUUID,
 		DestinationType:     "volume",
 		VolumeSize:          storage,
 		DeleteOnTermination: true,
