@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -14,12 +15,12 @@ import (
 	gooseclient "github.com/go-goose/goose/v5/client"
 	goosehttp "github.com/go-goose/goose/v5/http"
 
+	"github.com/go-goose/goose/v5/cinder"
 	"github.com/go-goose/goose/v5/glance"
 	"github.com/go-goose/goose/v5/identity"
 	"github.com/go-goose/goose/v5/neutron"
 	"github.com/go-goose/goose/v5/nova"
 
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/context"
@@ -46,16 +47,30 @@ type novaComputeClient interface {
 	DeleteServer(serverId string) error
 }
 
+type openstackServices struct {
+	compute OpenstackService
+	volume  OpenstackService
+}
+
+type OpenstackService struct {
+	Name     string
+	version  string
+	endpoint *url.URL
+}
+
 type openstackProvider struct {
 	project *Project
 	backend *Backend
 	options *Options
 
 	region        string
-	osClient      gooseclient.Client
+	osClient      gooseclient.AuthenticatingClient
 	computeClient novaComputeClient
 	networkClient *neutron.Client
 	imageClient   glanceImageClient
+	volumeClient  *cinder.Client
+
+	services *openstackServices
 
 	mu sync.Mutex
 
@@ -80,6 +95,27 @@ type openstackServerData struct {
 	Created  time.Time `json:"creationTimestamp"`
 
 	Labels map[string]string `yaml:"-"`
+}
+
+type openstackVolumeData struct {
+	Id          string             `json:"id"`
+	Status      string             `json:"status"`
+	Attachments []VolumeAttachment `json:"attachments"`
+	Name        string             `json:"name"`
+}
+
+type VolumeAttachment struct {
+	Id       string `json:"id"`
+	ServerId string `json:"server_id"`
+	VolumeId string `json:"volume_id"`
+}
+
+type VolumeActionResetStatus struct {
+	Action VolumeActionResetStatusDetails `json:"os-reset_status"`
+}
+
+type VolumeActionResetStatusDetails struct {
+	Status string `json:"status"`
 }
 
 func (s *openstackServer) String() string {
@@ -127,7 +163,7 @@ func (s *openstackServer) SerialOutput() (string, error) {
 	defer retry.Stop()
 
 	for {
-		err := s.p.osClient.SendRequest("POST", "compute", "v2", url, &requestData)
+		err := s.p.osClient.SendRequest("POST", s.p.services.compute.Name, s.p.services.compute.version, url, &requestData)
 		if err != nil {
 			debugf("failed to retrieve the serial console for server %s: %v", s, err)
 		}
@@ -647,13 +683,12 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 		storage = 20
 	}
 
-	deviceUUID := uuid.New().String()
 	opts.BlockDeviceMappings = []nova.BlockDeviceMapping{{
 		BootIndex:           0,
-		SourceType:          "image",
-		UUID:                deviceUUID,
-		DestinationType:     "volume",
 		VolumeSize:          storage,
+		SourceType:          "image",
+		UUID:                image.Id,
+		DestinationType:     "volume",
 		DeleteOnTermination: true,
 	}}
 
@@ -667,6 +702,7 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 
 	server, err := p.computeClient.RunServer(opts)
 	if err != nil {
+		printf("FAILED TO CREATE %v", server)
 		return nil, fmt.Errorf("cannot create instance: %v", &openstackError{err})
 	}
 
@@ -731,6 +767,74 @@ func (p *openstackProvider) list() ([]*openstackServer, error) {
 	return instances, nil
 }
 
+func (p *openstackProvider) listVolumes() ([]*openstackVolumeData, error) {
+	debug("Listing available openstack instances...")
+
+	volumeResults, err := p.volumeClient.GetVolumesDetail()
+	if err != nil {
+		return nil, fmt.Errorf("cannot list openstack volumes: %v", &openstackError{err})
+	}
+
+	var volumes []*openstackVolumeData
+	for _, v := range volumeResults.Volumes {
+		status := v.Status
+		if status != "available" {
+			attachments := []VolumeAttachment{}
+			for _, a := range v.Attachments {
+				att := VolumeAttachment{
+					Id:       a.Id,
+					ServerId: a.ServerId,
+					VolumeId: a.VolumeId,
+				}
+				attachments = append(attachments, att)
+			}
+			d := openstackVolumeData{
+				Id:          v.ID,
+				Name:        v.Name,
+				Status:      v.Status,
+				Attachments: attachments,
+			}
+			volumes = append(volumes, &d)
+		}
+	}
+	return volumes, nil
+}
+
+func (p *openstackProvider) removeVolume(ctx context.Context, volume *openstackVolumeData) error {
+	if !strings.HasPrefix(volume.Status, "error") && volume.Status != "available" {
+		printf("Resetting current volume status '%s' to 'error'", volume.Status)
+		err := p.ResetVolumeStatusToError(ctx, volume.Id)
+		if err != nil {
+			return fmt.Errorf("cannot reset the openstack volume state to 'error': %v", &openstackError{err})
+		}
+	}
+
+	err := p.volumeClient.DeleteVolume(volume.Id)
+	if err != nil {
+		return fmt.Errorf("cannot remove openstack volume: %v", &openstackError{err})
+	}
+
+	return err
+}
+
+func (p *openstackProvider) ResetVolumeStatusToError(ctx context.Context, volumeId string) error {
+	req := VolumeActionResetStatus{
+		Action: VolumeActionResetStatusDetails{
+			Status: "error",
+		},
+	}
+	var resp openstackVolumeData
+	url := fmt.Sprintf("volumes/%s/action", volumeId)
+
+	requestData := goosehttp.RequestData{ReqValue: req, RespValue: &resp, ExpectedStatus: []int{http.StatusOK}}
+	err := p.osClient.SendRequest("POST", p.services.volume.Name, p.services.volume.version, url, &requestData)
+	if err != nil {
+		return fmt.Errorf("failed to update the volume status to error: %v", err)
+	}
+
+	return nil
+}
+
 func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServer) error {
 	err := p.computeClient.DeleteServer(s.d.Id)
 	if err != nil {
@@ -746,6 +850,11 @@ func (p *openstackProvider) GarbageCollect() error {
 	}
 
 	instances, err := p.list()
+	if err != nil {
+		return err
+	}
+
+	volumes, err := p.listVolumes()
 	if err != nil {
 		return err
 	}
@@ -779,6 +888,67 @@ func (p *openstackProvider) GarbageCollect() error {
 				printf("WARNING: Cannot garbage collect %s: %v", s, err)
 			}
 		}
+	}
+
+	// Iterate over all the volumes
+	for _, v := range volumes {
+		printf("Checking openstack volume %s...", v.Id)
+
+		if len(v.Attachments) == 0 {
+			printf("The Volume has status '%s' and it is not attached to any other volume or server. Deleting it...", v.Status)
+			err = p.removeVolume(context.Background(), v)
+			if err != nil {
+				printf("WARNING: Cannot garbage collect %s: %v", v.Id, err)
+			}
+		} else {
+			attachedServer := v.Attachments[0].ServerId
+			if len(attachedServer) > 0 {
+				_, err := p.computeClient.GetServer(attachedServer)
+				if err != nil {
+					printf("The volume is attached to the server %s which does not exist anymore. Deleting it...", attachedServer)
+					err = p.removeVolume(context.Background(), v)
+					if err != nil {
+						printf("WARNING: Cannot garbage collect %s: %v", v.Id, err)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (p *openstackProvider) saveServices() error {
+	endpoints := p.osClient.EndpointsForRegion(p.region)
+	p.services = &openstackServices{}
+
+	for k, v := range endpoints {
+		if strings.HasPrefix(k, "volume") || strings.HasPrefix(k, "compute") {
+			ver := "v2"
+			if strings.HasSuffix(k, "v3") {
+				ver = "v3"
+			}
+			endpointUrl, err := url.Parse(v)
+			if err != nil {
+				return &FatalError{fmt.Errorf("error parsing endpoint: %v", &openstackError{err})}
+			}
+
+			service := OpenstackService{
+				Name:     k,
+				version:  ver,
+				endpoint: endpointUrl,
+			}
+			if strings.HasPrefix(k, "compute") {
+				p.services.compute = service
+			} else {
+				p.services.volume = service
+			}
+		}
+	}
+	if p.services.compute.Name == "" {
+		return &FatalError{fmt.Errorf("compute services endpoint not found")}
+	}
+	if p.services.volume.Name == "" {
+		return &FatalError{fmt.Errorf("volume services endpoint not found")}
 	}
 	return nil
 }
@@ -832,6 +1002,18 @@ func (p *openstackProvider) checkKey() error {
 		p.computeClient = nova.New(authClient)
 		p.networkClient = neutron.New(authClient)
 		p.imageClient = glance.New(authClient)
+
+		err = p.saveServices()
+		if err != nil {
+			return &FatalError{fmt.Errorf("failed to save services: %v", &openstackError{err})}
+		}
+
+		// Create cinder client
+		handleRequest := cinder.SetAuthHeaderFn(p.osClient.Token,
+			func(req *http.Request) (*http.Response, error) {
+				return http.DefaultClient.Do(req)
+			})
+		p.volumeClient = cinder.NewClient(p.osClient.TenantId(), p.services.volume.endpoint, handleRequest)
 		p.keyErr = err
 	}
 
