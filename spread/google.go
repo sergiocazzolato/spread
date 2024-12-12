@@ -426,6 +426,14 @@ func (p *googleProvider) createMachine(ctx context.Context, system *System) (*go
 	if p.validLabel(p.options.Password) {
 		labels["password"] = p.options.Password
 	}
+	if p.serviceAccount != "" {
+		// We use the sa name which is before the @ character in the email
+		sa := p.serviceAccount[:strings.IndexByte(p.serviceAccount, '@')]
+		// Labels have a limit of 63 characters
+		if len(sa) < 63 {
+			labels["sa"] = sa
+		}
+	}
 
 	metadata := []googleParams{{
 		"key":   "startup-script",
