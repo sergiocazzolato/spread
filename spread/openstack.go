@@ -43,6 +43,7 @@ type novaComputeClient interface {
 	ListAvailabilityZones() ([]nova.AvailabilityZone, error)
 	GetServer(serverId string) (*nova.ServerDetail, error)
 	ListServersDetail(filter *nova.Filter) ([]nova.ServerDetail, error)
+	ListVolumeAttachments(serverId string) ([]nova.VolumeAttachment, error)
 	RunServer(opts nova.RunServerOpts) (*nova.Entity, error)
 	DeleteServer(serverId string) error
 }
@@ -100,8 +101,17 @@ type openstackServerData struct {
 type openstackVolumeData struct {
 	Id          string             `json:"id"`
 	Status      string             `json:"status"`
-	Attachments []VolumeAttachment `json:"attachments"`
-	Name        string             `json:"name"`
+	SnapshotId  string             `json:"snapshot_id,omitempty"`
+	Attachments []VolumeAttachment `json:"attachments,omitempty"`
+	Name        string             `json:"name,omitempty"`
+}
+
+type openstackSnapshotData struct {
+	Id       string `json:"id"`
+	Name     string `json:"name"`
+	Size     int    `json:"size"`
+	Status   string `json:"status"`
+	VolumeID string `json:"volume_id,omitempty"`
 }
 
 type VolumeAttachment struct {
@@ -173,7 +183,7 @@ func (s *openstackServer) SerialOutput() (string, error) {
 		select {
 		case <-retry.C:
 		case <-timeout:
-			return "", fmt.Errorf("failed to retrieve the serial console for server %s: timeout reached", s)
+			return "", fmt.Errorf("failed to retrieve the serial console for instance %s: timeout reached", s)
 		}
 	}
 }
@@ -466,7 +476,7 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 		case <-retry.C:
 			server, err := p.computeClient.GetServer(s.d.Id)
 			if err != nil {
-				debugf("cannot get server info: %v", &openstackError{err})
+				debugf("cannot get instance info: %v", &openstackError{err})
 				continue
 			}
 			if server.Status != nova.StatusBuild {
@@ -567,7 +577,7 @@ func (p *openstackProvider) waitServerBoot(ctx context.Context, s *openstackServ
 		// be disabled in the nova configuration
 		err = p.waitServerBootSSH(ctx, s)
 		if err != nil {
-			return fmt.Errorf("cannot connect to server %s: %v", s, err)
+			return fmt.Errorf("cannot connect to instance %s: %v", s, err)
 		}
 	}
 	return nil
@@ -581,7 +591,7 @@ func (p *openstackProvider) address(ctx context.Context, s *openstackServer) (st
 	for {
 		server, err := p.computeClient.GetServer(s.d.Id)
 		if err != nil {
-			return "", fmt.Errorf("cannot get IP address for Openstack server %s: %v", s, &openstackError{err})
+			return "", fmt.Errorf("cannot get IP address for Openstack instance %s: %v", s, &openstackError{err})
 		}
 		// The addresses for a network is map of networks to a list of ip adresses
 		// We are configuring just 1 network address for the network
@@ -603,7 +613,7 @@ func (p *openstackProvider) address(ctx context.Context, s *openstackServer) (st
 		case <-retry.C:
 			debugf("Server %s is taking a while to get IP address...", s)
 		case <-timeout:
-			return "", fmt.Errorf("timeout waiting for Openstack server %s IP address", s)
+			return "", fmt.Errorf("timeout waiting for Openstack instance %s IP address", s)
 		case <-ctx.Done():
 			return "", fmt.Errorf("cannot wait for %s IP address: interrupted", s)
 		}
@@ -684,12 +694,11 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 	}
 
 	opts.BlockDeviceMappings = []nova.BlockDeviceMapping{{
-		BootIndex:           0,
-		VolumeSize:          storage,
-		SourceType:          "image",
-		UUID:                image.Id,
-		DestinationType:     "volume",
-		DeleteOnTermination: true,
+		BootIndex:       0,
+		SourceType:      "image",
+		DestinationType: "volume",
+		VolumeSize:      20,
+		UUID:            image.Id,
 	}}
 
 	if len(system.Groups) > 0 {
@@ -702,7 +711,6 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 
 	server, err := p.computeClient.RunServer(opts)
 	if err != nil {
-		printf("FAILED TO CREATE %v", server)
 		return nil, fmt.Errorf("cannot create instance: %v", &openstackError{err})
 	}
 
@@ -727,17 +735,18 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 	if err == nil {
 		err = p.waitServerBoot(ctx, s)
 	}
+
 	if err != nil {
 		if p.removeMachine(ctx, s) != nil {
-			return nil, &FatalError{fmt.Errorf("cannot allocate or deallocate (!) new Openstack server %s: %v", s.d.Name, err)}
+			return nil, &FatalError{fmt.Errorf("cannot allocate or deallocate (!) new Openstack instance %s: %v", s.d.Name, err)}
 		}
-		return nil, &FatalError{fmt.Errorf("cannot allocate new Openstack server %s: %v", s.d.Name, err)}
+		return nil, &FatalError{fmt.Errorf("cannot allocate new Openstack instance %s: %v", s.d.Name, err)}
 	}
 
 	return s, nil
 }
 
-func (p *openstackProvider) list() ([]*openstackServer, error) {
+func (p *openstackProvider) listServers() ([]*openstackServer, error) {
 	debug("Listing available openstack instances...")
 
 	filter := nova.NewFilter()
@@ -768,7 +777,7 @@ func (p *openstackProvider) list() ([]*openstackServer, error) {
 }
 
 func (p *openstackProvider) listVolumes() ([]*openstackVolumeData, error) {
-	debug("Listing available openstack instances...")
+	debug("Listing available openstack volumes...")
 
 	volumeResults, err := p.volumeClient.GetVolumesDetail()
 	if err != nil {
@@ -778,7 +787,7 @@ func (p *openstackProvider) listVolumes() ([]*openstackVolumeData, error) {
 	var volumes []*openstackVolumeData
 	for _, v := range volumeResults.Volumes {
 		status := v.Status
-		if status != "available" {
+		if status == "available" || strings.HasPrefix(status, "error") {
 			attachments := []VolumeAttachment{}
 			for _, a := range v.Attachments {
 				att := VolumeAttachment{
@@ -800,47 +809,75 @@ func (p *openstackProvider) listVolumes() ([]*openstackVolumeData, error) {
 	return volumes, nil
 }
 
-func (p *openstackProvider) removeVolume(ctx context.Context, volume *openstackVolumeData) error {
-	if !strings.HasPrefix(volume.Status, "error") && volume.Status != "available" {
-		printf("Resetting current volume status '%s' to 'error'", volume.Status)
-		err := p.ResetVolumeStatusToError(ctx, volume.Id)
-		if err != nil {
-			return fmt.Errorf("cannot reset the openstack volume state to 'error': %v", &openstackError{err})
+func (p *openstackProvider) listSnapshots() ([]*openstackSnapshotData, error) {
+	debug("Listing available openstack snapshots...")
+
+	snapshotResults, err := p.volumeClient.GetSnapshotsDetail()
+	if err != nil {
+		return nil, fmt.Errorf("cannot list openstack snapshots: %v", &openstackError{err})
+	}
+
+	var snapshots []*openstackSnapshotData
+	for _, s := range snapshotResults.Snapshots {
+		d := openstackSnapshotData{
+			Id:       s.ID,
+			Name:     s.Name,
+			Status:   s.Status,
+			Size:     s.Size,
+			VolumeID: s.VolumeID,
 		}
+		snapshots = append(snapshots, &d)
 	}
-
-	err := p.volumeClient.DeleteVolume(volume.Id)
-	if err != nil {
-		return fmt.Errorf("cannot remove openstack volume: %v", &openstackError{err})
-	}
-
-	return err
+	return snapshots, nil
 }
 
-func (p *openstackProvider) ResetVolumeStatusToError(ctx context.Context, volumeId string) error {
-	req := VolumeActionResetStatus{
-		Action: VolumeActionResetStatusDetails{
-			Status: "error",
-		},
-	}
-	var resp openstackVolumeData
-	url := fmt.Sprintf("volumes/%s/action", volumeId)
-
-	requestData := goosehttp.RequestData{ReqValue: req, RespValue: &resp, ExpectedStatus: []int{http.StatusOK}}
-	err := p.osClient.SendRequest("POST", p.services.volume.Name, p.services.volume.version, url, &requestData)
-	if err != nil {
-		return fmt.Errorf("failed to update the volume status to error: %v", err)
-	}
-
-	return nil
-}
+var openstackRemoveServerTimeout = 1 * time.Minute
+var openstackRemoveServerRetry = 5 * time.Second
 
 func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServer) error {
-	err := p.computeClient.DeleteServer(s.d.Id)
+	volumeAttachments, err := p.computeClient.ListVolumeAttachments(s.d.Id)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve the volumes attached to the instance: %v", err)
+	}
+	err = p.computeClient.DeleteServer(s.d.Id)
 	if err != nil {
 		return fmt.Errorf("cannot remove openstack instance: %v", &openstackError{err})
 	}
+	timeout := time.After(openstackRemoveServerTimeout)
+	retry := time.NewTicker(openstackRemoveServerRetry)
+	defer retry.Stop()
 
+	for {
+		_, err := p.computeClient.GetServer(s.d.Id)
+		if err != nil {
+			// this is when the server was already removed
+			break
+		}
+		select {
+		case <-retry.C:
+		case <-timeout:
+			printf("cannot remove the openstack server %s: timeout reached", s.d.Id)
+			return nil
+		}
+	}
+
+	for _, volumeAttachment := range volumeAttachments {
+		volumeResults, err := p.volumeClient.GetVolume(volumeAttachment.VolumeId)
+		if err != nil {
+			// this is when the volume was already removed
+			return nil
+		}
+
+		status := volumeResults.Volume.Status
+		if status == "available" || strings.HasPrefix(status, "error") {
+			// When the status is either available or error, the volume is deleted
+			// otherwise, it will garbage collected after a time when it becomes available
+			err := p.volumeClient.DeleteVolume(volumeAttachment.VolumeId)
+			if err != nil {
+				return fmt.Errorf("cannot remove openstack volume: %v", &openstackError{err})
+			}
+		}
+	}
 	return err
 }
 
@@ -849,12 +886,16 @@ func (p *openstackProvider) GarbageCollect() error {
 		return err
 	}
 
-	instances, err := p.list()
+	instances, err := p.listServers()
 	if err != nil {
 		return err
 	}
 
 	volumes, err := p.listVolumes()
+	if err != nil {
+		return err
+	}
+	snapshots, err := p.listSnapshots()
 	if err != nil {
 		return err
 	}
@@ -885,7 +926,7 @@ func (p *openstackProvider) GarbageCollect() error {
 			printf("Server %s exceeds halt-timeout. Shutting it down...", s)
 			err := p.removeMachine(context.Background(), s)
 			if err != nil {
-				printf("WARNING: Cannot garbage collect %s: %v", s, err)
+				printf("WARNING: Cannot garbage collect server %s: %v", s, err)
 			}
 		}
 	}
@@ -894,26 +935,23 @@ func (p *openstackProvider) GarbageCollect() error {
 	for _, v := range volumes {
 		printf("Checking openstack volume %s...", v.Id)
 
-		if len(v.Attachments) == 0 {
-			printf("The Volume has status '%s' and it is not attached to any other volume or server. Deleting it...", v.Status)
-			err = p.removeVolume(context.Background(), v)
-			if err != nil {
-				printf("WARNING: Cannot garbage collect %s: %v", v.Id, err)
+		snapshotAttached := ""
+		for _, s := range snapshots {
+			if s.VolumeID == v.Id {
+				snapshotAttached = s.Id
+				break
 			}
-		} else {
-			attachedServer := v.Attachments[0].ServerId
-			if len(attachedServer) > 0 {
-				_, err := p.computeClient.GetServer(attachedServer)
-				if err != nil {
-					printf("The volume is attached to the server %s which does not exist anymore. Deleting it...", attachedServer)
-					err = p.removeVolume(context.Background(), v)
-					if err != nil {
-						printf("WARNING: Cannot garbage collect %s: %v", v.Id, err)
-					}
-				}
+		}
+
+		if snapshotAttached == "" {
+			printf("Volume ready to be deleted %s. Shutting it down...", v.Id)
+			err := p.volumeClient.DeleteVolume(v.Id)
+			if err != nil {
+				printf("WARNING: Cannot garbage collect volume %s: %v", v.Id, err)
 			}
 		}
 	}
+
 	return nil
 }
 
