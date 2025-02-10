@@ -471,7 +471,14 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("timeout waiting for %s to provision", s)
+			server, err := p.computeClient.GetServer(s.d.Id)
+			if err != nil {
+				return fmt.Errorf("timeout waiting for %s to provision", s.d.Id)
+			}
+			if server.Fault == nil {
+				return fmt.Errorf("timeout waiting for %s to provision, status: %s", s.d.Id, server.Status)
+			}
+			return fmt.Errorf("timeout waiting for %s to provision, error: %s", s, server.Fault.Message)
 
 		case <-retry.C:
 			server, err := p.computeClient.GetServer(s.d.Id)
@@ -488,7 +495,10 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 							return fmt.Errorf("error saving provisioning result output: %v", err)
 						}
 					}
-					return fmt.Errorf("server status is %s", server.Status)
+					if server.Status != nova.StatusError || server.Fault == nil {
+						return fmt.Errorf("server status is %s", server.Status)
+					}
+					return fmt.Errorf(server.Fault.Message)
 				}
 				return nil
 			}
@@ -848,7 +858,7 @@ func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServe
 	defer retry.Stop()
 
 	for {
-		_, err := p.computeClient.GetServer(s.d.Id)
+		server, err := p.computeClient.GetServer(s.d.Id)
 		if err != nil {
 			// this is when the server was already removed
 			break
@@ -856,8 +866,7 @@ func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServe
 		select {
 		case <-retry.C:
 		case <-timeout:
-			printf("cannot remove the openstack server %s: timeout reached", s.d.Id)
-			return nil
+			printf("cannot remove the openstack server %s: timeout reached with server status %s", server.Id, server.Status)
 		}
 	}
 
@@ -876,6 +885,8 @@ func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServe
 			if err != nil {
 				return fmt.Errorf("cannot remove openstack volume: %v", &openstackError{err})
 			}
+		} else {
+			printf("cannot remove the openstack volume %s, it remains with status %s:", volumeResults.Volume.ID, status)
 		}
 	}
 	return err
