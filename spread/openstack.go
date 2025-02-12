@@ -189,16 +189,9 @@ func (s *openstackServer) SerialOutput() (string, error) {
 }
 
 const (
-	openstackStaging      = "STAGING"
-	openstackProvisioning = "PROVISIONING"
-	openstackRunning      = "RUNNING"
-	openstackStopping     = "STOPPING"
-	openstackStopped      = "STOPPED"
-	openstackSuspending   = "SUSPENDING"
-	openstackTerminating  = "TERMINATED"
-
-	openstackPending = "PENDING"
-	openstackDone    = "DONE"
+	serverStatusProvisioning = "PROVISIONING"
+	volumeStatusAvailable    = "available"
+	volumeStatusError        = "error"
 )
 
 func (p *openstackProvider) Backend() *Backend {
@@ -465,18 +458,16 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 	debugf("Waiting for %s to provision...", s)
 
 	wait_timeout := s.system.WaitTimeout.Duration
-	timeout := time.NewTicker(openstackProvisionTimeout)
+	timeout := time.After(openstackProvisionTimeout)
 	if wait_timeout != 0 {
-		timeout = time.NewTicker(wait_timeout)
+		timeout = time.After(wait_timeout)
 	}
 	retry := time.NewTicker(openstackProvisionRetry)
-
 	defer retry.Stop()
-	defer timeout.Stop()
 
 	for {
 		select {
-		case <-timeout.C:
+		case <-timeout:
 			server, err := p.computeClient.GetServer(s.d.Id)
 			if err != nil {
 				return fmt.Errorf("timeout waiting for %s to provision", s.d.Id)
@@ -737,7 +728,7 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 			Name:     name,
 			Flavor:   flavor.Name,
 			Networks: system.Networks,
-			Status:   openstackProvisioning,
+			Status:   serverStatusProvisioning,
 			Created:  time.Now(),
 		},
 
@@ -803,7 +794,7 @@ func (p *openstackProvider) listVolumes() ([]*openstackVolumeData, error) {
 	var volumes []*openstackVolumeData
 	for _, v := range volumeResults.Volumes {
 		status := v.Status
-		if status == "available" || strings.HasPrefix(status, "error") {
+		if status == volumeStatusAvailable || strings.HasPrefix(status, volumeStatusError) {
 			attachments := []VolumeAttachment{}
 			for _, a := range v.Attachments {
 				att := VolumeAttachment{
@@ -847,55 +838,84 @@ func (p *openstackProvider) listSnapshots() ([]*openstackSnapshotData, error) {
 	return snapshots, nil
 }
 
-var openstackRemoveServerTimeout = 1 * time.Minute
-var openstackRemoveServerRetry = 5 * time.Second
+var openstackRemoveServerTimeout = 3 * time.Minute
+var openstackRemoveVolumeTimeout = 2 * time.Minute
+var openstackRemoveRetry = 5 * time.Second
 
 func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServer) error {
 	volumeAttachments, err := p.computeClient.ListVolumeAttachments(s.d.Id)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve the volumes attached to the instance: %v", err)
 	}
-	err = p.computeClient.DeleteServer(s.d.Id)
+
+	err = p.removeServer(ctx, s)
+	if err != nil {
+		return err
+	}
+
+	for _, volumeAttachment := range volumeAttachments {
+		err = p.removeVolume(ctx, s, volumeAttachment.VolumeId)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *openstackProvider) removeServer(ctx context.Context, s *openstackServer) error {
+	err := p.computeClient.DeleteServer(s.d.Id)
 	if err != nil {
 		return fmt.Errorf("cannot remove openstack instance: %v", &openstackError{err})
 	}
 	timeout := time.After(openstackRemoveServerTimeout)
-	retry := time.NewTicker(openstackRemoveServerRetry)
+	retry := time.NewTicker(openstackRemoveRetry)
 	defer retry.Stop()
 
 	for {
 		server, err := p.computeClient.GetServer(s.d.Id)
-		if err != nil {
+		if err != nil || server.Status == nova.StatusDeleted {
 			// this is when the server was already removed
-			break
+			return nil
 		}
+
 		select {
 		case <-retry.C:
 		case <-timeout:
-			printf("cannot remove the openstack server %s: timeout reached with server status %s", server.Id, server.Status)
+			printf("cannot remove the openstack server %s (%s): timeout reached with server status %s", server.Id, s.d.Name, server.Status)
+			return nil
 		}
 	}
+}
 
-	for _, volumeAttachment := range volumeAttachments {
-		volumeResults, err := p.volumeClient.GetVolume(volumeAttachment.VolumeId)
+func (p *openstackProvider) removeVolume(ctx context.Context, s *openstackServer, volumeId string) error {
+	timeout := time.After(openstackRemoveVolumeTimeout)
+	retry := time.NewTicker(openstackRemoveRetry)
+	defer retry.Stop()
+
+	for {
+		volumeResults, err := p.volumeClient.GetVolume(volumeId)
 		if err != nil {
 			// this is when the volume was already removed
 			return nil
 		}
 
 		status := volumeResults.Volume.Status
-		if status == "available" || strings.HasPrefix(status, "error") {
+		if status == volumeStatusAvailable || strings.HasPrefix(status, volumeStatusError) {
 			// When the status is either available or error, the volume is deleted
 			// otherwise, it will garbage collected after a time when it becomes available
-			err := p.volumeClient.DeleteVolume(volumeAttachment.VolumeId)
+			err := p.volumeClient.DeleteVolume(volumeId)
 			if err != nil {
 				return fmt.Errorf("cannot remove openstack volume: %v", &openstackError{err})
 			}
-		} else {
-			printf("cannot remove the openstack volume %s, it remains with status %s:", volumeResults.Volume.ID, status)
+			return nil
+		}
+		select {
+		case <-retry.C:
+		case <-timeout:
+			printf("cannot remove the openstack volume %s for server %s, it remains with status %s", volumeResults.Volume.ID, s.d.Name, status)
+			return nil
 		}
 	}
-	return err
 }
 
 func (p *openstackProvider) GarbageCollect() error {

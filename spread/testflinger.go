@@ -297,16 +297,14 @@ func (p *TestFlingerProvider) requestDevice(ctx context.Context, system *System)
 func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlingerJob) error {
 	printf("Waiting for TestFlinger %s to have an address...", s.d.Name)
 	wait_timeout := s.system.WaitTimeout.Duration
-	timeout := time.NewTicker(15 * time.Minute)
+	timeout := time.After(15 * time.Minute)
 	if wait_timeout != 0 {
-		timeout = time.NewTicker(wait_timeout)
+		timeout = time.After(wait_timeout)
 	}
 	warn := time.NewTicker(3 * time.Minute)
 	retry := time.NewTicker(15 * time.Second)
-
 	defer retry.Stop()
 	defer warn.Stop()
-	defer timeout.Stop()
 
 	for {
 		var resRes TestFlingerResultResponse
@@ -343,7 +341,7 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 		case <-retry.C:
 		case <-warn.C:
 			printf("Job %s for device % s is in state %s", s.d.JobId, s.d.Name, state)
-		case <-timeout.C:
+		case <-timeout:
 			s.Discard(ctx)
 			return fmt.Errorf("wait timeout reached, job discarded")
 		}
