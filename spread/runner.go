@@ -22,25 +22,24 @@ import (
 )
 
 type Options struct {
-	Password         string
-	Filter           Filter
-	Reuse            bool
-	ReusePid         int
-	Debug            bool
-	NoDebug          bool
-	Shell            bool
-	ShellBefore      bool
-	ShellAfter       bool
-	Abend            bool
-	Restore          bool
-	Resend           bool
-	Discard          bool
-	Artifacts        string
-	Logs             string
-	Seed             int64
-	Repeat           int
-	GarbageCollect   bool
-	ProjectArtifacts string
+	Password       string
+	Filter         Filter
+	Reuse          bool
+	ReusePid       int
+	Debug          bool
+	NoDebug        bool
+	Shell          bool
+	ShellBefore    bool
+	ShellAfter     bool
+	Abend          bool
+	Restore        bool
+	Resend         bool
+	Discard        bool
+	Artifacts      string
+	Logs           string
+	Seed           int64
+	Repeat         int
+	GarbageCollect bool
 }
 
 type Runner struct {
@@ -726,11 +725,11 @@ func (r *Runner) worker(backend *Backend, system *System, order []int) {
 }
 
 func (r *Runner) fetchProjectArtifacts(client *Client) error {
-	if r.options.ProjectArtifacts == "" || len(r.project.Artifacts) == 0 {
+	if r.options.Artifacts == "" || len(r.project.Artifacts) == 0 {
 		return nil
 	}
 
-	localDir := filepath.Join(r.options.ProjectArtifacts)
+	localDir := filepath.Join(r.options.Artifacts)
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		return fmt.Errorf("cannot create artifacts directory: %v", err)
 	}
