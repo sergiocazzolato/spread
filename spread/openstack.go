@@ -464,13 +464,19 @@ func (p *openstackProvider) saveProvisioningOutput(s *openstackServer, detail *n
 func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServer) error {
 	debugf("Waiting for %s to provision...", s)
 
-	timeout := time.After(openstackProvisionTimeout)
+	wait_timeout := s.system.WaitTimeout.Duration
+	timeout := time.NewTicker(openstackProvisionTimeout)
+	if wait_timeout != 0 {
+		timeout = time.NewTicker(wait_timeout)
+	}
 	retry := time.NewTicker(openstackProvisionRetry)
+
 	defer retry.Stop()
+	defer timeout.Stop()
 
 	for {
 		select {
-		case <-timeout:
+		case <-timeout.C:
 			server, err := p.computeClient.GetServer(s.d.Id)
 			if err != nil {
 				return fmt.Errorf("timeout waiting for %s to provision", s.d.Id)

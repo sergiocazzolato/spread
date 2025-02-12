@@ -84,7 +84,7 @@ type Backend struct {
 	KillTimeout Timeout `yaml:"kill-timeout"`
 	HaltTimeout Timeout `yaml:"halt-timeout"`
 
-	// Only for Testflinger so far.
+	// Only for Testflinger and Openstack so far.
 	WaitTimeout Timeout `yaml:"wait-timeout"`
 
 	Priority OptionalInt
@@ -127,7 +127,8 @@ type System struct {
 	Workers  int
 
 	// Only for Testflinger so far.
-	Queue       string
+	Queue string
+	// Only for Testflinger and Openstack so far.
 	WaitTimeout Timeout `yaml:"wait-timeout"`
 
 	// Only for Linode and Google so far.

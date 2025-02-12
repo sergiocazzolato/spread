@@ -303,7 +303,11 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 	}
 	warn := time.NewTicker(3 * time.Minute)
 	retry := time.NewTicker(15 * time.Second)
+
 	defer retry.Stop()
+	defer warn.Stop()
+	defer timeout.Stop()
+
 	for {
 		var resRes TestFlingerResultResponse
 		err := p.do("GET", "/result/"+s.d.JobId, nil, &resRes)
