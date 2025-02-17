@@ -332,6 +332,8 @@ type Suite struct {
 	Systems  []string
 	Backends []string
 
+	Artifacts []string
+
 	Variants    []string
 	Environment *Environment
 
@@ -650,6 +652,12 @@ func Load(path string) (*Project, error) {
 
 		if suite.Summary == "" {
 			return nil, fmt.Errorf("%s is missing a summary", suite)
+		}
+
+		for _, fname := range suite.Artifacts {
+			if filepath.IsAbs(fname) || fname != filepath.Clean(fname) || strings.HasPrefix(fname, "../") {
+				return nil, fmt.Errorf("the suite has an invalid artifact path: %s", fname)
+			}
 		}
 
 		if err := checkEnv(suite, &suite.Environment); err != nil {
