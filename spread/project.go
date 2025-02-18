@@ -480,6 +480,10 @@ func join(scripts ...string) string {
 	return buf.String()
 }
 
+func isPathRelativeAndInsideWorkingDir(path string) bool {
+	return !filepath.IsAbs(path) && path == filepath.Clean(path) && !strings.HasPrefix(path, "../")
+}
+
 type jobsByName []*Job
 
 func (jobs jobsByName) Len() int      { return len(jobs) }
@@ -540,7 +544,7 @@ func Load(path string) (*Project, error) {
 	}
 
 	for _, fname := range project.Artifacts {
-		if filepath.IsAbs(fname) || fname != filepath.Clean(fname) || strings.HasPrefix(fname, "../") {
+		if !isPathRelativeAndInsideWorkingDir(fname) {
 			return nil, fmt.Errorf("the project has an invalid artifact path: %s", fname)
 		}
 	}
@@ -655,7 +659,7 @@ func Load(path string) (*Project, error) {
 		}
 
 		for _, fname := range suite.Artifacts {
-			if filepath.IsAbs(fname) || fname != filepath.Clean(fname) || strings.HasPrefix(fname, "../") {
+			if !isPathRelativeAndInsideWorkingDir(fname) {
 				return nil, fmt.Errorf("the suite has an invalid artifact path: %s", fname)
 			}
 		}
@@ -723,7 +727,7 @@ func Load(path string) (*Project, error) {
 			}
 
 			for _, fname := range task.Artifacts {
-				if filepath.IsAbs(fname) || fname != filepath.Clean(fname) || strings.HasPrefix(fname, "../") {
+				if !isPathRelativeAndInsideWorkingDir(fname) {
 					return nil, fmt.Errorf("%s has improper artifact path: %s", task.Name, fname)
 				}
 			}

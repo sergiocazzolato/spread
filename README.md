@@ -803,7 +803,7 @@ downloaded into.
 
 For example, consider the following command:
 ```
-$ spread -project-artifacts=./artifacts lxd:ubuntu-16.04
+$ spread -artifacts=./artifacts lxd:ubuntu-16.04
 ```
 
 Assuming the given project has residual content registered, the directory
