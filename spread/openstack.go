@@ -265,7 +265,7 @@ type openstackError struct {
 //
 // This code will find the *last* "caused by:" line as it generally tells
 // the most details.
-// TODO: check if the above idea works well in practise, otherwise switch
+// TODO: check if the above idea works well in practice, otherwise switch
 // to e.g. firstLine
 func (e *openstackError) cause(errMsg string) string {
 	debugf("Full openstack error message: %v", errMsg)
@@ -493,7 +493,7 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 						}
 					}
 					if server.Status != nova.StatusError || server.Fault == nil {
-						return fmt.Errorf("server status is %s", server.Status)
+						return fmt.Errorf("cannot use server with status %s", server.Status)
 					}
 					return fmt.Errorf(server.Fault.Message)
 				}

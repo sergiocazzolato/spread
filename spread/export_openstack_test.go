@@ -30,10 +30,10 @@ func MockOpenstackComputeClient(p Provider, computeClient novaComputeClient) (re
 	}
 }
 
-func MockOpenstackGooseClient(p Provider, gooseClient gooseclient.Client) (restore func()) {
+func MockOpenstackGooseClient(p Provider, authenticatingClient gooseclient.AuthenticatingClient) (restore func()) {
 	opst := p.(*openstackProvider)
 	oldOsClient := opst.osClient
-	opst.osClient = gooseClient
+	opst.osClient = authenticatingClient
 	return func() {
 		opst.osClient = oldOsClient
 	}
@@ -76,26 +76,26 @@ func OpenstackFindImage(p Provider, name string) (*glance.ImageDetail, error) {
 
 func OpenstackWaitProvision(p Provider, ctx context.Context, serverID, serverName string) error {
 	opst := p.(*openstackProvider)
+	wait, _ := time.ParseDuration("1s")
+
 	server := &openstackServer{
 		p: opst,
 		d: openstackServerData{
 			Id:   serverID,
 			Name: serverName,
 		},
+		system: &System{
+			WaitTimeout: Timeout{
+				Duration: wait,
+			},
+		},
 	}
 	return opst.waitProvision(ctx, server)
 }
 
-func OpenstackWaitServerBoot(p Provider, ctx context.Context, serverID, serverName string, serverNetworks []string) error {
+func OpenstackWaitServerBoot(p Provider, server openstackServer, ctx context.Context, serverID, serverName string, serverNetworks []string) error {
 	opst := p.(*openstackProvider)
-	server := &openstackServer{
-		p: opst,
-		d: openstackServerData{
-			Id:       serverID,
-			Name:     serverName,
-			Networks: serverNetworks,
-		},
-	}
+
 	return opst.waitServerBoot(ctx, server)
 }
 

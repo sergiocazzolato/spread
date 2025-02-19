@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-goose/goose/v5/glance"
 	goosehttp "github.com/go-goose/goose/v5/http"
+	"github.com/go-goose/goose/v5/identity"
 	"github.com/go-goose/goose/v5/nova"
 	"golang.org/x/crypto/ssh"
 
@@ -19,7 +20,15 @@ import (
 	. "gopkg.in/check.v1"
 )
 
-func newOpenstack() spread.Provider {
+func newOpenstackProvider() spread.Provider {
+	prj := &spread.Project{}
+	b := &spread.Backend{}
+	opts := &spread.Options{}
+
+	return spread.Openstack(prj, b, opts)
+}
+
+func newOpenstackServer(provider spread.Provider) spread.Provider {
 	prj := &spread.Project{}
 	b := &spread.Backend{}
 	opts := &spread.Options{}
@@ -68,10 +77,10 @@ problems. Please try again later.</p>
 
 func (s *openstackSuite) TestOpenstackError(c *C) {
 	err1 := spread.NewOpenstackError(opstErr1)
-	c.Check(err1.Error(), Equals, `request (https://keystone.bos01.canonistack.canonical.com:5000/v3/tokens) returned unexpected status: 404`)
+	c.Check(err1.Error(), Equals, `request (https://keystone.bos01.canonistack.canonical.com:5000/v3/tokens) returned unexpected status: 404; error info: <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">`)
 
 	err2 := spread.NewOpenstackError(opstErr2)
-	c.Check(err2.Error(), Equals, `request (https://keystone.bos01.canonistack.canonical.com:5000/v3/tokens) returned unexpected status: 503`)
+	c.Check(err2.Error(), Equals, `request (https://keystone.bos01.canonistack.canonical.com:5000/v3/tokens) returned unexpected status: 503; error info: <!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">`)
 
 	err3 := spread.NewOpenstackError(errors.New("other error"))
 	c.Check(err3.Error(), Equals, `other error`)
@@ -91,6 +100,7 @@ type fakeNovaComputeClient struct {
 	listAvailabilityZones func() ([]nova.AvailabilityZone, error)
 	getServer             func(serverId string) (*nova.ServerDetail, error)
 	listServersDetail     func(filter *nova.Filter) ([]nova.ServerDetail, error)
+	listVolumeAttachments func(serverId string) ([]nova.VolumeAttachment, error)
 	runServer             func(opts nova.RunServerOpts) (*nova.Entity, error)
 	deleteServer          func(serverId string) error
 }
@@ -111,6 +121,10 @@ func (cc *fakeNovaComputeClient) ListServersDetail(filter *nova.Filter) ([]nova.
 	return cc.listServersDetail(filter)
 }
 
+func (cc *fakeNovaComputeClient) ListVolumeAttachments(serverId string) ([]nova.VolumeAttachment, error) {
+	return cc.ListVolumeAttachments(serverId)
+}
+
 func (cc *fakeNovaComputeClient) RunServer(opts nova.RunServerOpts) (*nova.Entity, error) {
 	return cc.runServer(opts)
 }
@@ -119,18 +133,68 @@ func (cc *fakeNovaComputeClient) DeleteServer(serverId string) error {
 	return cc.deleteServer(serverId)
 }
 
-type fakeOsClientRequest struct {
-	method      string
-	svcType     string
-	svcVersion  string
-	url         string
-	requestData *goosehttp.RequestData
+type fakeOsAuthenticatingClient struct {
+	fakeOsClient
+
+	setVersionDiscoveryDisabled func(service string, disabled bool)
+	setRequiredServiceTypes     func(requiredServiceTypes []string)
+	authenticate                func() error
+	isAuthenticated             func() bool
+	token                       func() string
+	userId                      func() string
+	tenantId                    func() string
+	endpointsForRegion          func(region string) identity.ServiceURLs
+	identityAuthOptions         func() (identity.AuthOptions, error)
+}
+
+func (ac *fakeOsAuthenticatingClient) SetVersionDiscoveryDisabled(service string, disabled bool) {
+	ac.setVersionDiscoveryDisabled(service, disabled)
+}
+
+func (ac *fakeOsAuthenticatingClient) SetRequiredServiceTypes(requiredServiceTypes []string) {
+	ac.setRequiredServiceTypes(requiredServiceTypes)
+}
+
+func (ac *fakeOsAuthenticatingClient) Authenticate() error {
+	return ac.authenticate()
+}
+
+func (ac *fakeOsAuthenticatingClient) IsAuthenticated() bool {
+	return ac.isAuthenticated()
+}
+
+func (ac *fakeOsAuthenticatingClient) EndpointsForRegion(region string) identity.ServiceURLs {
+	return ac.endpointsForRegion(region)
+}
+
+func (ac *fakeOsAuthenticatingClient) IdentityAuthOptions() (identity.AuthOptions, error) {
+	return ac.identityAuthOptions()
+}
+
+func (ac *fakeOsAuthenticatingClient) TenantId() string {
+	return ac.tenantId()
+}
+
+func (ac *fakeOsAuthenticatingClient) Token() string {
+	return ac.token()
+}
+
+func (ac *fakeOsAuthenticatingClient) UserId() string {
+	return ac.userId()
 }
 
 type fakeOsClient struct {
 	requests []fakeOsClientRequest
 	response func() interface{}
 	err      error
+}
+
+type fakeOsClientRequest struct {
+	method      string
+	svcType     string
+	svcVersion  string
+	url         string
+	requestData *goosehttp.RequestData
 }
 
 func (osc *fakeOsClient) SendRequest(method string, svcType string, svcVersion string, url string, requestData *goosehttp.RequestData) error {
@@ -162,7 +226,7 @@ type openstackFindImageSuite struct {
 
 	fakeImageClient   *fakeGlanceImageClient
 	fakeComputeClient *fakeNovaComputeClient
-	fakeOsClient      *fakeOsClient
+	fakeOsClient      *fakeOsAuthenticatingClient
 }
 
 var _ = Suite(&openstackFindImageSuite{})
@@ -172,7 +236,7 @@ func (s *openstackFindImageSuite) SetUpTest(c *C) {
 	c.Assert(s.opst, NotNil)
 	s.fakeImageClient = &fakeGlanceImageClient{}
 	s.fakeComputeClient = &fakeNovaComputeClient{}
-	s.fakeOsClient = &fakeOsClient{}
+	s.fakeOsClient = &fakeOsAuthenticatingClient{}
 
 	spread.MockOpenstackImageClient(s.opst, s.fakeImageClient)
 	spread.MockOpenstackComputeClient(s.opst, s.fakeComputeClient)
@@ -338,8 +402,8 @@ func (s *openstackFindImageSuite) TestOpenstackWaitProvisionBadStatus(c *C) {
 	restore := spread.MockOpenstackProvisionTimeout(100*time.Millisecond, time.Nanosecond)
 	defer restore()
 
-	err := spread.OpenstackWaitProvision(s.opst, context.TODO(), "test-id", "")
-	c.Check(err, ErrorMatches, "cannot use server: status is not active but ERROR")
+	err := spread.OpenstackWaitProvision(s.opst, context.TODO(), "test-id", "test-name")
+	c.Check(err, ErrorMatches, "cannot use server with status ERROR")
 	c.Check(count, Equals, 1)
 }
 
@@ -351,8 +415,8 @@ func (s *openstackFindImageSuite) TestOpenstackWaitProvisionTimeout(c *C) {
 	restore := spread.MockOpenstackProvisionTimeout(100*time.Millisecond, time.Nanosecond)
 	defer restore()
 
-	err := spread.OpenstackWaitProvision(s.opst, context.TODO(), "", "test-server")
-	c.Check(err, ErrorMatches, "timeout waiting for test-server to provision")
+	err := spread.OpenstackWaitProvision(s.opst, context.TODO(), "test-id", "test-name")
+	c.Check(err, ErrorMatches, "timeout waiting for test-id to provision, status: BUILD")
 }
 
 func (s *openstackFindImageSuite) TestOpenstackWaitServerBootSerialHappy(c *C) {
@@ -418,6 +482,10 @@ func (s *openstackFindImageSuite) TestOpenstackWaitServerBootSSHHappy(c *C) {
 
 	// force fallback to SSH
 	s.fakeOsClient.err = fmt.Errorf("serial not supported")
+
+	s.server.serialOutput = func() (string, error) {
+		return "", nil
+	}
 
 	err := spread.OpenstackWaitServerBoot(s.opst, context.TODO(), "test-id", "", []string{"net-1"})
 	c.Check(err, IsNil)
