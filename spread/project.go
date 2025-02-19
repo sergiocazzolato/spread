@@ -23,6 +23,8 @@ type Project struct {
 
 	Environment *Environment
 
+	Artifacts []string
+
 	Repack      string
 	Prepare     string
 	Restore     string
@@ -330,6 +332,8 @@ type Suite struct {
 	Systems  []string
 	Backends []string
 
+	Artifacts []string
+
 	Variants    []string
 	Environment *Environment
 
@@ -476,6 +480,10 @@ func join(scripts ...string) string {
 	return buf.String()
 }
 
+func isPathRelativeAndInsideWorkingDir(path string) bool {
+	return !filepath.IsAbs(path) && path == filepath.Clean(path) && !strings.HasPrefix(path, "../")
+}
+
 type jobsByName []*Job
 
 func (jobs jobsByName) Len() int      { return len(jobs) }
@@ -533,6 +541,12 @@ func Load(path string) (*Project, error) {
 
 	if err := checkEnv(project, &project.Environment); err != nil {
 		return nil, err
+	}
+
+	for _, fname := range project.Artifacts {
+		if !isPathRelativeAndInsideWorkingDir(fname) {
+			return nil, fmt.Errorf("the project has an invalid artifact path: %s", fname)
+		}
 	}
 
 	for bname, backend := range project.Backends {
@@ -644,6 +658,12 @@ func Load(path string) (*Project, error) {
 			return nil, fmt.Errorf("%s is missing a summary", suite)
 		}
 
+		for _, fname := range suite.Artifacts {
+			if !isPathRelativeAndInsideWorkingDir(fname) {
+				return nil, fmt.Errorf("the suite has an invalid artifact path: %s", fname)
+			}
+		}
+
 		if err := checkEnv(suite, &suite.Environment); err != nil {
 			return nil, err
 		}
@@ -707,7 +727,7 @@ func Load(path string) (*Project, error) {
 			}
 
 			for _, fname := range task.Artifacts {
-				if filepath.IsAbs(fname) || fname != filepath.Clean(fname) || strings.HasPrefix(fname, "../") {
+				if !isPathRelativeAndInsideWorkingDir(fname) {
 					return nil, fmt.Errorf("%s has improper artifact path: %s", task.Name, fname)
 				}
 			}
