@@ -14,12 +14,13 @@ import (
 	// with go1.6 which is used in the xenial autopkgtests
 	"golang.org/x/net/context"
 
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/terminal"
 	"net"
 	"regexp"
 	"strconv"
 	"syscall"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 var sshDial = ssh.Dial
@@ -635,7 +636,7 @@ func (c *Client) SendTar(tar io.Reader, unpackDir string) error {
 	return nil
 }
 
-func (c *Client) RecvTar(packDir string, include []string, tar io.Writer) error {
+func (c *Client) RecvTar(packDir string, include []string, tarFilter TarFilter, tar io.Writer) error {
 	session, err := c.sshc.NewSession()
 	if err != nil {
 		return err
@@ -657,7 +658,7 @@ func (c *Client) RecvTar(packDir string, include []string, tar io.Writer) error 
 	var stderr safeBuffer
 	session.Stdout = tar
 	session.Stderr = &stderr
-	cmd := fmt.Sprintf(`cd '%s' && %s/bin/tar cJ --sort=name --ignore-failed-read -- %s`, packDir, c.sudo(), strings.Join(args, " "))
+	cmd := fmt.Sprintf(`cd '%s' && %s/bin/tar -c%s --sort=name --ignore-failed-read -- %s`, packDir, c.sudo(), tarFilter, strings.Join(args, " "))
 	err = c.runCommand(session, cmd, nil, &stderr)
 	if err != nil {
 		return outputErr(stderr.Bytes(), err)

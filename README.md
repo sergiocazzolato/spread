@@ -755,6 +755,9 @@ artifacts:
 ...
 ```
 
+By default artifacts are fetched and compressed using `xz`. If this is
+unavailable use the `-tar-filter` flag specifying an option, eg `gzip`.
+
 ### Task-level artifacts
 
 The provided directory or file paths are relative to the task directory for 

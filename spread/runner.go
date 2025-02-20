@@ -21,6 +21,20 @@ import (
 	"gopkg.in/tomb.v2"
 )
 
+type TarFilter string
+
+const (
+	XZ    TarFilter = "J"
+	GZip  TarFilter = "z"
+	Bzip2 TarFilter = "j"
+)
+
+var TarFilters map[string]TarFilter = map[string]TarFilter{
+	"xz":   XZ,
+	"gzip": GZip,
+	"bz2":  Bzip2,
+}
+
 type Options struct {
 	Password       string
 	Filter         Filter
@@ -37,6 +51,7 @@ type Options struct {
 	Discard        bool
 	Artifacts      string
 	Logs           string
+	TarFilter      TarFilter
 	Seed           int64
 	Repeat         int
 	GarbageCollect bool
@@ -879,7 +894,7 @@ func (r *Runner) fetchArtifacts(client *Client, localDir string, remoteDir strin
 	tarr, tarw := io.Pipe()
 
 	var stderr bytes.Buffer
-	cmd := exec.Command("tar", "xJ")
+	cmd := exec.Command("tar", "x"+string(r.options.TarFilter))
 	cmd.Dir = localDir
 	cmd.Stdin = tarr
 	cmd.Stderr = &stderr
@@ -890,7 +905,7 @@ func (r *Runner) fetchArtifacts(client *Client, localDir string, remoteDir strin
 
 	printf("Fetching artifacts...")
 
-	err = client.RecvTar(remoteDir, artifactDeclaration, tarw)
+	err = client.RecvTar(remoteDir, artifactDeclaration, r.options.TarFilter, tarw)
 	tarw.Close()
 	terr := cmd.Wait()
 
