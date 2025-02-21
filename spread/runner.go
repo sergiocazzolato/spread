@@ -879,7 +879,7 @@ func (r *Runner) fetchArtifacts(client *Client, localDir string, remoteDir strin
 	tarr, tarw := io.Pipe()
 
 	var stderr bytes.Buffer
-	cmd := exec.Command("tar", "xJ")
+	cmd := exec.Command("tar", "xz")
 	cmd.Dir = localDir
 	cmd.Stdin = tarr
 	cmd.Stderr = &stderr
