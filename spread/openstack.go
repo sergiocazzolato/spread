@@ -704,7 +704,7 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 		BootIndex:       0,
 		SourceType:      "image",
 		DestinationType: "volume",
-		VolumeSize:      20,
+		VolumeSize:      storage,
 		UUID:            image.Id,
 	}}
 
