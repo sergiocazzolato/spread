@@ -129,7 +129,9 @@ type System struct {
 	Workers  int
 
 	// Only for Testflinger so far.
-	Queue string
+	Queue       string
+	ReserveKeys []string `yaml:"reserve-keys"`
+
 	// Only for Testflinger and Openstack so far.
 	WaitTimeout Timeout `yaml:"wait-timeout"`
 

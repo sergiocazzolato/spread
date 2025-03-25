@@ -49,6 +49,7 @@ type TestFlingerJobData struct {
 type TestFlingerRequestData struct {
 	Queue          string                      `json:"job_queue"`
 	ProvisionDdata TestFlingerProvisioningData `json:"provision_data"`
+	ReserveData    TestFlingerReserveData      `json:"reserve_data"`
 	AllocateData   TestFlingerAllocateData     `json:"allocate_data"`
 	Tags           []string                    `json:"tags"`
 }
@@ -56,6 +57,10 @@ type TestFlingerRequestData struct {
 type TestFlingerProvisioningData struct {
 	Url    string `json:"url,omitempty"`
 	Distro string `json:"distro,omitempty"`
+}
+
+type TestFlingerReserveData struct {
+	Keys []string `json:"ssh_keys,omitempty"`
 }
 
 type TestFlingerAllocateData struct {
@@ -266,6 +271,11 @@ func (p *TestFlingerProvider) requestDevice(ctx context.Context, system *System)
 		// 1. spread which is used to find the spread active jobs
 		// 2. halt-timeout=DURATION which is used to determine when a running job has to be cancelled
 		Tags: []string{"spread", "halt-timeout=" + p.backend.HaltTimeout.Duration.String()},
+	}
+
+	if len(system.ReserveKeys) > 0 {
+		rdata := TestFlingerReserveData{Keys: system.ReserveKeys}
+		data.ReserveData = rdata
 	}
 
 	var jobRes TestFlingerJobResponse
