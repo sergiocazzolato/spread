@@ -601,7 +601,8 @@ backends:
                 password: ubuntu
             - ubuntu-core-16-64:
                 username: ubuntu
-                ssh-rsa-key: ~/.ssh/id_rsa
+                ssh-rsa-key: '$(HOST: echo "$SPREAD_SSH_KEY")'
+                ssh-key-pass: '$(HOST: echo "$SPREAD_SSH_KEY_PASS")'
 ```
 
 If the password field is defined without a username, it specifies the password
@@ -609,8 +610,10 @@ for root to connect over SSH.  If both username and password are provided,
 the credentials will be used to connect to the system, and password-less sudo
 must be available for the provided user.
 
-When the ssh-rsa-key field is set, spread uses the ssh key to stablish the
-connection. In this scenario the password is not considered.
+When the ssh-rsa-key field is set, spread uses the ssh key (RSA) to stablish the
+connection. In this scenario the password is not considered, and the ssh-key-pass field
+is used to decrypt the ssh key used (when the ssh key is not encrypted, the passphrase
+is not required). 
 
 In all cases the end result is the same: a system that executes scripts as root.
 

@@ -170,7 +170,8 @@ func (p *humboxProvider) createMachine(ctx context.Context, system *System) (*hu
 
 	username := system.Username
 	password := system.Password
-	sshkeyfile := system.SSHKeyFile
+	sshKey := system.SSHKey
+	sshKeyPass := system.SSHKeyPass
 	if username == "" {
 		username = "root"
 	}
@@ -178,7 +179,7 @@ func (p *humboxProvider) createMachine(ctx context.Context, system *System) (*hu
 		password = p.options.Password
 	}
 
-	if err := waitServerUp(ctx, s, username, password, sshkeyfile); err != nil {
+	if err := waitServerUp(ctx, s, username, password, sshKey, sshKeyPass); err != nil {
 		if p.removeMachine(ctx, s) != nil {
 			return nil, &FatalError{fmt.Errorf("cannot allocate or deallocate (!) new Humbox server %s: %v", s, err)}
 		}

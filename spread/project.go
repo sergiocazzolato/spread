@@ -126,12 +126,13 @@ type System struct {
 	Kernel     string
 	Username   string
 	Password   string
-	SSHKeyFile string `yaml:"ssh-rsa-key"`
+	SSHKey     string `yaml:"ssh-rsa-key"`
+	SSHKeyPass string `yaml:"ssh-key-pass"`
 	Workers    int
 
 	// Only for Testflinger so far.
-	Queue       string
-	ReserveKeys []string `yaml:"reserve-keys"`
+	Queue      string
+	ReserveKey string `yaml:"reserve-key"`
 
 	// Only for Testflinger and Openstack so far.
 	WaitTimeout Timeout `yaml:"wait-timeout"`
@@ -1092,12 +1093,19 @@ func (p *Project) Jobs(options *Options) ([]*Job, error) {
 				}
 				system.Password = value
 			}
-			if system.SSHKeyFile != "" {
-				value, err := evalone(system.String()+" sshkeyfile", system.SSHKeyFile, cmdcache, false, penv, benv)
+			if system.SSHKey != "" {
+				value, err := evalone(system.String()+" sshkey", system.SSHKey, cmdcache, false, penv, benv)
 				if err != nil {
 					return nil, err
 				}
-				system.SSHKeyFile = value
+				system.SSHKey = value
+			}
+			if system.SSHKeyPass != "" {
+				value, err := evalone(system.String()+" sshkeypass", system.SSHKeyPass, cmdcache, false, penv, benv)
+				if err != nil {
+					return nil, err
+				}
+				system.SSHKeyPass = value
 			}
 		}
 	}

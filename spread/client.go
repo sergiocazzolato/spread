@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,7 +20,7 @@ import (
 	"syscall"
 
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 var sshDial = ssh.Dial
@@ -37,36 +36,42 @@ type Client struct {
 	killTimeout time.Duration
 }
 
-func getSSHKeySigner(sshkeyfile string) (ssh.Signer, error) {
-	key, err := ioutil.ReadFile(sshkeyfile)
-	if err != nil {
-		return nil, fmt.Errorf("unable to read private key file: %v", err)
-	}
+func getSSHKeySigner(sshKey string, sshKeyPass string) (ssh.Signer, error) {
 	// Create the Signer for this private key.
 	// It is not supported the
-	signer, err := ssh.ParsePrivateKey(key)
+	var signer ssh.Signer
+	var err error
+
+	if sshKeyPass != "" {
+		signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(sshKey), []byte(sshKeyPass))
+	} else {
+		signer, err = ssh.ParsePrivateKey([]byte(sshKey))
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse private key: %v", err)
 	}
 	return signer, nil
 }
 
-func Dial(server Server, username, password string, sshkeyfile string) (*Client, error) {
+func Dial(server Server, username, password string, sshKey string, sshKeyPass string) (*Client, error) {
 	auth := ssh.Password(password)
-	if sshkeyfile != "" {
-		signer, err := getSSHKeySigner(sshkeyfile)
+	if sshKey != "" {
+		signer, err := getSSHKeySigner(sshKey, sshKeyPass)
 		if err != nil {
-			return nil, fmt.Errorf("Unable to parse ssh key from file %s: %v", sshkeyfile, err)
+			return nil, fmt.Errorf("Unable to parse ssh key: %v", err)
 		}
 		auth = ssh.PublicKeys(signer)
 	}
 
 	config := &ssh.ClientConfig{
-		User:            username,
-		Auth:            []ssh.AuthMethod{auth},
-		Timeout:         10 * time.Second,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		User:              username,
+		Auth:              []ssh.AuthMethod{auth},
+		Timeout:           10 * time.Second,
+		HostKeyCallback:   ssh.InsecureIgnoreHostKey(),
+		HostKeyAlgorithms: []string{ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSASHA512},
 	}
+
 	addr := server.Address()
 	if !strings.Contains(addr, ":") {
 		addr += ":22"
@@ -464,7 +469,7 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 		cmd = fmt.Sprintf("{\nf=$(mktemp)\ntrap 'rm '$f EXIT\ncat > $f <<'SCRIPT_END'\n%s\nSCRIPT_END\n%s/bin/bash $f\n}", buf.String(), c.sudo())
 		session.Stdout = os.Stdout
 		session.Stderr = os.Stderr
-		w, h, err := terminal.GetSize(0)
+		w, h, err := term.GetSize(0)
 		if err != nil {
 			return nil, fmt.Errorf("cannot get local terminal size: %v", err)
 		}
@@ -477,12 +482,12 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 
 	if mode == shellOutput {
 		termLock()
-		tstate, terr := terminal.MakeRaw(0)
+		tstate, terr := term.MakeRaw(0)
 		if terr != nil {
 			return nil, fmt.Errorf("cannot put local terminal in raw mode: %v", terr)
 		}
 		err = session.Run(cmd)
-		terminal.Restore(0, tstate)
+		term.Restore(0, tstate)
 		termUnlock()
 	} else {
 		err = c.runCommand(session, cmd, &stdout, &stderr)
@@ -1072,7 +1077,7 @@ func waitPortUp(ctx context.Context, what fmt.Stringer, address string) error {
 	return nil
 }
 
-func waitServerUp(ctx context.Context, server Server, username, password string, sshkey string) error {
+func waitServerUp(ctx context.Context, server Server, username, password string, sshKeyFile string, sshKeyPass string) error {
 	var timeout = time.After(5 * time.Minute)
 	var relog = time.NewTicker(2 * time.Minute)
 	defer relog.Stop()
@@ -1081,7 +1086,7 @@ func waitServerUp(ctx context.Context, server Server, username, password string,
 
 	for {
 		debugf("Waiting until %s is listening...", server)
-		client, err := Dial(server, username, password, sshkey)
+		client, err := Dial(server, username, password, sshKeyFile, sshKeyPass)
 		if err == nil {
 			client.Close()
 			break

@@ -273,8 +273,8 @@ func (p *TestFlingerProvider) requestDevice(ctx context.Context, system *System)
 		Tags: []string{"spread", "halt-timeout=" + p.backend.HaltTimeout.Duration.String()},
 	}
 
-	if len(system.ReserveKeys) > 0 {
-		rdata := TestFlingerReserveData{Keys: system.ReserveKeys}
+	if system.ReserveKey != "" {
+		rdata := TestFlingerReserveData{Keys: []string{system.ReserveKey}}
 		data.ReserveData = rdata
 	}
 
