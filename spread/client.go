@@ -56,20 +56,21 @@ func getSSHKeySigner(sshKey string, sshKeyPass string) (ssh.Signer, error) {
 
 func Dial(server Server, username, password string, sshKey string, sshKeyPass string) (*Client, error) {
 	auth := ssh.Password(password)
+	config := &ssh.ClientConfig{
+		User:            username,
+		Auth:            []ssh.AuthMethod{auth},
+		Timeout:         10 * time.Second,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	// When the sshKey is set, it is used for the authentication
 	if sshKey != "" {
 		signer, err := getSSHKeySigner(sshKey, sshKeyPass)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to parse ssh key: %v", err)
 		}
-		auth = ssh.PublicKeys(signer)
-	}
-
-	config := &ssh.ClientConfig{
-		User:              username,
-		Auth:              []ssh.AuthMethod{auth},
-		Timeout:           10 * time.Second,
-		HostKeyCallback:   ssh.InsecureIgnoreHostKey(),
-		HostKeyAlgorithms: []string{ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSASHA512},
+		config.Auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
+		config.HostKeyAlgorithms = []string{ssh.KeyAlgoRSA, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSASHA512}
 	}
 
 	addr := server.Address()
