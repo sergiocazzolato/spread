@@ -60,11 +60,12 @@ type TestFlingerProvisioningData struct {
 }
 
 type TestFlingerReserveData struct {
-	Keys []string `json:"ssh_keys,omitempty"`
+	Keys    []string `json:"ssh_keys,omitempty"`
+	Timeout int      `json:"timeout,omitempty"`
 }
 
 type TestFlingerAllocateData struct {
-	Allocate bool `json:"allocate"`
+	Allocate bool `json:"allocate,omitempty"`
 }
 
 type TestFlingerJobResponse struct {
@@ -98,6 +99,7 @@ const (
 	CANCELLED = "cancelled"
 	COMPLETE  = "complete"
 	COMPLETED = "completed"
+	RESERVE   = "reserve"
 )
 
 func (s *TestFlingerJob) String() string {
@@ -239,7 +241,7 @@ func (p *TestFlingerProvider) Allocate(ctx context.Context, system *System) (Ser
 	err = p.waitDeviceBoot(ctx, s)
 	if err != nil {
 		if p.options.Logs != "" {
-			saveErr := p.saveJobOutput(s)
+			saveErr := p.saveJobResultsOutput(s)
 			if saveErr != nil {
 				return nil, fmt.Errorf("error saving job result output: %v", err)
 			}
@@ -264,9 +266,6 @@ func (p *TestFlingerProvider) requestDevice(ctx context.Context, system *System)
 	data := &TestFlingerRequestData{
 		Queue:          queue,
 		ProvisionDdata: pdata,
-		AllocateData: TestFlingerAllocateData{
-			Allocate: true,
-		},
 		// Tags used are:
 		// 1. spread which is used to find the spread active jobs
 		// 2. halt-timeout=DURATION which is used to determine when a running job has to be cancelled
@@ -274,8 +273,16 @@ func (p *TestFlingerProvider) requestDevice(ctx context.Context, system *System)
 	}
 
 	if system.ReserveKey != "" {
-		rdata := TestFlingerReserveData{Keys: []string{system.ReserveKey}}
-		data.ReserveData = rdata
+		rData := TestFlingerReserveData{
+			Keys:    []string{system.ReserveKey},
+			Timeout: int(p.backend.HaltTimeout.Duration.Seconds()),
+		}
+		data.ReserveData = rData
+	} else {
+		aData := TestFlingerAllocateData{
+			Allocate: true,
+		}
+		data.AllocateData = aData
 	}
 
 	var jobRes TestFlingerJobResponse
@@ -342,6 +349,19 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 			}
 		}
 
+		if state == RESERVE {
+			ip, err := p.getIpForReservedDevice(s)
+			if err != nil {
+				return fmt.Errorf("failed to get Ip: %v: ", err)
+			}
+			s.address = ip
+			if net.ParseIP(s.address) == nil {
+				return fmt.Errorf("wrong ip format %s: ", s.address)
+			}
+			printf("Reserved device with ip %s", s.address)
+			return nil
+		}
+
 		// The job_id is not active anymore
 		if state == CANCELLED || state == COMPLETE || state == COMPLETED {
 			return fmt.Errorf("job state is either cancelled or completed")
@@ -358,7 +378,35 @@ func (p *TestFlingerProvider) waitDeviceBoot(ctx context.Context, s *TestFlinger
 	}
 }
 
-func (p *TestFlingerProvider) saveJobOutput(s *TestFlingerJob) error {
+func (p *TestFlingerProvider) getIpForReservedDevice(s *TestFlingerJob) (string, error) {
+	timeout := time.After(3 * time.Minute)
+	retry := time.NewTicker(10 * time.Second)
+	defer retry.Stop()
+
+	for {
+		output, err := p.dop("GET", "/result/"+s.d.JobId+"/output", nil)
+		if err != nil {
+			return "", fmt.Errorf("error requesting results output for job: %v", err)
+		}
+
+		// It is supposed that the device status is reserve, so the ip is in the output
+		re := regexp.MustCompile(`ssh .*@([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)`)
+		match := re.FindStringSubmatch(output)
+
+		if len(match) > 1 {
+			return match[1], nil
+		}
+
+		select {
+		case <-retry.C:
+		case <-timeout:
+			return "", fmt.Errorf("timeout reached waiting to get the ip")
+		}
+	}
+
+}
+
+func (p *TestFlingerProvider) saveJobResultsOutput(s *TestFlingerJob) error {
 	var resRes TestFlingerResultResponse
 	err := p.do("GET", "/result/"+s.d.JobId, nil, &resRes)
 	if err != nil {
@@ -397,6 +445,19 @@ func TestFlingerQueue(system *System) string {
 	return system.Name
 }
 
+func getTestflingerUrl(subpath string) string {
+	url := os.Getenv("TF_ENDPOINT")
+	version := os.Getenv("TF_API_VERSION")
+	if len(url) == 0 {
+		url = "https://testflinger.canonical.com"
+	}
+	if len(version) == 0 {
+		version = "v1"
+	}
+	url += "/" + version + subpath
+	return url
+}
+
 func (p *TestFlingerProvider) do(method, subpath string, params interface{}, result interface{}) error {
 	var data []byte
 	var err error
@@ -408,15 +469,7 @@ func (p *TestFlingerProvider) do(method, subpath string, params interface{}, res
 		}
 	}
 
-	url := os.Getenv("TF_ENDPOINT")
-	version := os.Getenv("TF_API_VERSION")
-	if len(url) == 0 {
-		url = "https://testflinger.canonical.com"
-	}
-	if len(version) == 0 {
-		version = "v1"
-	}
-	url += "/" + version + subpath
+	url := getTestflingerUrl(subpath)
 
 	// Repeat on 500s. Note that Google's 500s may come in late, as a marshaled error
 	// under a different code. See the INTERNAL handling at the end below.
@@ -450,6 +503,7 @@ func (p *TestFlingerProvider) do(method, subpath string, params interface{}, res
 			if err != nil && resp.StatusCode == 404 {
 				return errTestFlingerNotFound
 			}
+			// When the result is a string, the data is just copied
 			if err != nil {
 				return err
 			}
@@ -464,6 +518,52 @@ func (p *TestFlingerProvider) do(method, subpath string, params interface{}, res
 	}
 
 	return nil
+}
+
+// This is used when the response is plain text (it is not a json formatted response)
+func (p *TestFlingerProvider) dop(method, subpath string, params interface{}) (string, error) {
+	var data []byte
+	var err error
+
+	if params != nil {
+		data, err = json.Marshal(params)
+		if err != nil {
+			return "", fmt.Errorf("cannot marshal TestFlinger request parameters: %s", err)
+		}
+	}
+
+	url := getTestflingerUrl(subpath)
+
+	// Repeat on 500s. Note that Google's 500s may come in late, as a marshaled error
+	// under a different code. See the INTERNAL handling at the end below.
+	var resp *http.Response
+	var req *http.Request
+	var delays = rand.Perm(10)
+	for i := 0; i < 10; i++ {
+		req, err = http.NewRequest(method, url, bytes.NewBuffer(data))
+		if err != nil {
+			return "", &FatalError{fmt.Errorf("cannot create HTTP request: %v", err)}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = p.client.Do(req)
+		if err == nil && 500 <= resp.StatusCode && resp.StatusCode < 600 {
+			time.Sleep(time.Duration(delays[i]) * 250 * time.Millisecond)
+			continue
+		}
+
+		if err != nil {
+			return "", fmt.Errorf("cannot perform TestFlinger request: %v", err)
+		}
+
+		data, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("cannot read TestFlinger response: %v", err)
+		}
+
+		return string(data), nil
+	}
+
+	return "", fmt.Errorf("too many retries performing TestFlinger request")
 }
 
 var errTestFlingerNotFound = fmt.Errorf("not found")
