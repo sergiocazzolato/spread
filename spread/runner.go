@@ -484,8 +484,9 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 	client.SetKillTimeout(job.KillTimeoutFor(context))
 
 	var err error
+	var out []byte
 	if r.options.Perf {
-		_, err = client.Perf(script, dir, job.Environment)
+		out, err = client.Perf(script, dir, job.Environment)
 	} else {
 		_, err = client.Trace(script, dir, job.Environment)
 	}
@@ -498,11 +499,7 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 		if debug != "" {
 			var output []byte
 			start = time.Now()
-			if r.options.Perf {
-				output, err = client.Perf(debug, dir, job.Environment)
-			} else {
-				output, err = client.Trace(debug, dir, job.Environment)		
-			}
+			output, err = client.Trace(debug, dir, job.Environment)
 			if err != nil {
 				// The serial output is saved in the logs directory if logs option is not empty
 				// Otherwise just an error message is displayed
@@ -562,6 +559,16 @@ func (r *Runner) run(client *Client, job *Job, verb string, context interface{},
 			printf("Error running debug shell: %v", err)
 		}
 		printf("Continuing...")
+	}
+	// Print or save performance output
+	if r.options.Perf {
+		if r.options.Logs != "" {
+			filename := job.Backend.Name + "_" + job.System.Name + "_" + verb + "_" + strings.Replace(job.Task.Name, "/", "_", -1) + ".perf.log"
+			err = saveLog(r.options.Logs, filename, out)
+		} else {
+			start = start.Add(1)
+			printft(start, startTime|endTime|startFold|endFold, "Output %s %s (%s) :\n%v", verb, contextStr, server.Label(), string(out))
+		}
 	}
 
 	return true
