@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v2"
 
 	"golang.org/x/net/context"
 )
@@ -43,6 +45,10 @@ func (s *lxdServer) String() string {
 	return fmt.Sprintf("%s (%s)", s.system, s.d.Name)
 }
 
+func (s *lxdServer) Label() string {
+	return s.d.Name
+}
+
 func (s *lxdServer) Provider() Provider {
 	return s.p
 }
@@ -59,6 +65,10 @@ func (s *lxdServer) ReuseData() interface{} {
 	return &s.d
 }
 
+func (s *lxdServer) SerialOutput() (string, error) {
+	return "", nil
+}
+
 func (s *lxdServer) Discard(ctx context.Context) error {
 	output, err := exec.Command("lxc", "delete", "--force", s.d.Name).CombinedOutput()
 	if err != nil {
@@ -69,6 +79,10 @@ func (s *lxdServer) Discard(ctx context.Context) error {
 
 func (p *lxdProvider) Backend() *Backend {
 	return p.backend
+}
+
+func (p *lxdProvider) GarbageCollect() error {
+	return nil
 }
 
 func (p *lxdProvider) Reuse(ctx context.Context, rsystem *ReuseSystem, system *System) (Server, error) {
@@ -94,6 +108,10 @@ func (p *lxdProvider) Allocate(ctx context.Context, system *System) (Server, err
 		return nil, err
 	}
 
+	if p.backend.Location != "" {
+		name = p.backend.Location + ":" + name
+	}
+
 	args := []string{"launch", lxdimage, name}
 	if !p.options.Reuse {
 		args = append(args, "--ephemeral")
@@ -116,7 +134,7 @@ func (p *lxdProvider) Allocate(ctx context.Context, system *System) (Server, err
 	}
 
 	printf("Waiting for lxd container %s to have an address...", name)
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(30 * time.Second)
 	retry := time.NewTicker(1 * time.Second)
 	defer retry.Stop()
 	for {
@@ -156,6 +174,28 @@ func isDebArch(s string) bool {
 	return false
 }
 
+func debArch() string {
+	switch runtime.GOARCH {
+	case "386":
+		return "i386"
+	case "amd64":
+		return "amd64"
+	case "arm":
+		return "armhf"
+	case "arm64":
+		return "arm64"
+	case "ppc64le":
+		return "ppc64el"
+	case "s390x":
+		return "s390x"
+	case "ppc":
+		return "powerpc"
+	case "ppc64":
+		return "ppc64"
+	}
+	return "amd64"
+}
+
 func (p *lxdProvider) lxdImage(system *System) (string, error) {
 	// LXD loves the network. Force it to use a local image if available.
 	fingerprint, err := p.lxdLocalImage(system)
@@ -176,7 +216,7 @@ func (p *lxdProvider) lxdImage(system *System) (string, error) {
 	// Translate spread-like name to LXD-like URL.
 	parts := strings.Split(system.Image, "-")
 	if !isDebArch(parts[len(parts)-1]) {
-		parts = append(parts, "amd64")
+		parts = append(parts, debArch())
 	}
 	if parts[0] == "ubuntu" {
 		return "ubuntu:" + strings.Join(parts[1:], "/"), nil
@@ -249,7 +289,7 @@ func (p *lxdProvider) lxdLocalImage(system *System) (string, error) {
 	}
 
 	if !isDebArch(parts[len(parts)-1]) {
-		parts = append(parts, "amd64")
+		parts = append(parts, debArch())
 	}
 
 	remoteNames, err := p.lxdRemoteNames()
@@ -446,7 +486,7 @@ func (p *lxdProvider) serverJSON(name string) (*lxdServerJSON, error) {
 
 func (p *lxdProvider) tuneSSH(name string) error {
 	cmds := [][]string{
-		{"sed", "-i", `s/\(PermitRootLogin\|PasswordAuthentication\)\>.*/\1 yes/`, "/etc/ssh/sshd_config"},
+		{"sed", "-i", `s/^\s*#\?\s*\(PermitRootLogin\|PasswordAuthentication\)\>.*/\1 yes/`, "/etc/ssh/sshd_config"},
 		{"/bin/bash", "-c", fmt.Sprintf("echo root:'%s' | chpasswd", p.options.Password)},
 		{"killall", "-HUP", "sshd"},
 	}

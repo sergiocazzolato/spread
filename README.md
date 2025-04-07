@@ -5,6 +5,7 @@ Spread
 
 [Why?](#why)  
 [The cascading matrix](#matrix)  
+[Install](#install)
 [Hello world](#hello-world)  
 [Environments](#environments)  
 [Variants](#variants)  
@@ -20,10 +21,13 @@ Spread
 [Including, excluding, and renaming files](#including)  
 [Selecting which tasks to run](#selecting)  
 [Disabling unless manually selected](#manual)  
-[Fetching residual artifacts](#residue)  
+[Fetching artifacts](#artifacts)  
 [LXD backend](#lxd)  
 [QEMU backend](#qemu)  
-[Linode backend](#linode)  
+[Google backend](#google)  
+[Openstack backend](#openstack)  
+[Linode backend](#linode)
+[Testflinger backend](#testflinger)
 [AdHoc backend](#adhoc)  
 [More on parallelism](#parallelism)  
 [Repacking and delta uploads](#repacking)  
@@ -85,6 +89,16 @@ Any time you want to see how your matrix looks like and all the jobs that would
 run, use the `-list` option. It will show one entry per line in the format:
 ```
 backend:system:suite/task:variant
+```
+
+<a name="install"/>
+
+## Install
+
+Please install `spread` using Go install method:
+
+```shell
+go install github.com/snapcore/spread/cmd/spread@latest
 ```
 
 <a name="hello-world"/>
@@ -399,6 +413,7 @@ A few helper functions are available for scripts to use:
 
  * _REBOOT_ - Reboot the system. See [below](#rebooting) for details.
  * _MATCH_ - Run `grep -q -e` on stdin. Without match, print error including content.
+ * _NOMATCH_ - Assert no match on stdin.  If match found, print error including content.
  * _ERROR_ - Fail script with provided error message only instead of script trace.
  * _FATAL_ - Similar to ERROR, but prevents retries. Specific to [adhoc backend](#adhoc).
  * _ADDRESS_ - Set allocated system address. Specific to [adhoc backend](#adhoc).
@@ -517,6 +532,37 @@ as a `debug-each` script at the project, backend, and suite levels, so they
 are aggregated and repeated for every task under them.
 
 
+<a name="ordering">
+
+## Ordering tasks
+
+The order of tasks on every run is random by default, so that it becomes visible
+when the correctness of some tasks depends on unspecified side effects of
+prior tasks.
+
+When breakages related to ordering occur, Spread can attempt to reproduce the
+ordering used via the `-seed` parameter. On every run, the required seed to
+reproduce the order utilized will be logged in the output. Note that when
+several workers are being used, they will steal pending work from a common
+queue based on timing, which means the order may not be exactly the same.
+
+In some cases, it may also be useful to explicitly prioritize some tasks. For
+example, if there are two workers and one long task, it's best if that known
+long task starts first, so that the workers can share more of the load. If
+the long task comes last the two workers will share all the smaller tasks,
+then one worker will pick the long task, and the other worker will stop since
+there's nothing else to do. The outcome is a longer total run time.
+
+To define the priority of a task, suite, system, or backend, simply specify
+the priority field in the desired context:
+```
+priority: 100
+```
+
+The larger the priority, the earlier it will be scheduled. The default
+priority is zero, and negative priorities are supported too.
+
+
 <a name="repeating"/>
 
 ## Repeating tasks
@@ -543,9 +589,9 @@ there is an option `-perf` which by default is false.
 ## Passwords and usernames
 
 To keep things simple and convenient, Spread prepares systems to connect over SSH
-as the root user using a single password for all systems. Unless explicitly defined
-via the _-pass_ command line option, the password will be random and different on
-each run.
+as the root user using a single password for all systems. Unless explicitly defined either
+via the `-pass` command line option or via setting the cert field for the system.
+The password will be random and different on each run.
 
 Some of the supported backends may be unable to provide an image with the correct
 password in place, or with the correct SSH configuration for root to connect. In
@@ -562,12 +608,21 @@ backends:
             - ubuntu-16.04:
                 username: ubuntu
                 password: ubuntu
+            - ubuntu-core-16-64:
+                username: ubuntu
+                ssh-rsa-key: '$(HOST: echo "$SPREAD_SSH_KEY")'
+                ssh-key-pass: '$(HOST: echo "$SPREAD_SSH_KEY_PASS")'
 ```
 
 If the password field is defined without a username, it specifies the password
 for root to connect over SSH.  If both username and password are provided,
 the credentials will be used to connect to the system, and password-less sudo
 must be available for the provided user.
+
+When the ssh-rsa-key field is set, spread uses the ssh key (RSA) to stablish the
+connection. In this scenario the password is not considered, and the ssh-key-pass field
+is used to decrypt the ssh key used (when the ssh key is not encrypted, the passphrase
+is not required). 
 
 In all cases the end result is the same: a system that executes scripts as root.
 
@@ -687,40 +742,92 @@ suite, and so forth. Play with `-list` to get a clear idea of what is
 selected to run.
 
 
-<a name="residue"/>
+<a name="artifacts"/>
 
 ## Fetching residual artifacts
 
 Content generated by tasks may easily be retrieved after the task completes
-by registering the desired content under the `residue` field:
+by registering the desired content under the `artifacts` field:
 
 _$PROJECT/examples/hello/task.yaml_
 ```
 summary: Generate some useful content.
 
-residue:
+artifacts:
     - some/file
     - some/dir/
 
 ...
 ```
 
-The provided directory or file paths are relative to the task directory, and
-they are only considered when Spread is run with the `-residue` flag pointing
-to the target directory where content will be downloaded into.
+Content generated by the project may be retrieved after the project completes
+by registering the desired content under the same `artifacts` field:
+
+_$PROJECT/spread.yaml_
+```
+project: my-project
+
+artifacts:
+    - some/file
+    - some/dir/
+...
+```
+
+### Task-level artifacts
+
+The provided directory or file paths are relative to the task directory for 
+task-level artifacts, and they are only considered when Spread is run with 
+the `-artifacts` flag pointing to the target directory where content will 
+be downloaded into.
 
 For example, consider the following command:
 ```
-$ spread -residue=./residue lxd:ubuntu-16.04:mysuite/task-one:variant-a
+$ spread -artifacts=./artifacts lxd:ubuntu-16.04:mysuite/task-one:variant-a
 ```
 
 Assuming the given task has residual content registered, the directory
-`./residue/lxd:ubuntu-16.04:mysuite/task-one:variant-a` would be created to
+`./artifacts/lxd:ubuntu-16.04:mysuite/task-one:variant-a` would be created to
 hold it after the job is executed.
 
 Residual content is fetched whether the job finishes successfully or not,
 and even if some of the provided paths are missing.
 
+### Suite-level artifacts
+
+The provided directory or file paths are relative to the suite directory for 
+suite-level artifacts, and they are only considered when Spread is run with 
+the `-artifacts` flag pointing to the target directory where content will 
+be downloaded into.
+
+For example, consider the following command:
+```
+$ spread -artifacts=./artifacts lxd:ubuntu-16.04:mysuite/task-one:variant-a
+```
+
+Assuming the given task has residual content registered, the directory
+`./artifacts/lxd:ubuntu-16.04:mysuite/` would be created to
+hold it after the job is executed.
+
+Residual content is fetched whether the job finishes successfully or not,
+and even if some of the provided paths are missing.
+
+### Project-level artifacts
+
+The provided directory or file paths are relative to the project directory 
+(contained in the environment variable `$SPREAD_PATH`) for project-level
+artifacts, and they are only considered when Spread is run with the 
+`-artifacts` flag pointing to the target directory where content will be 
+downloaded into.
+
+For example, consider the following command:
+```
+$ spread -artifacts=./artifacts lxd:ubuntu-16.04
+```
+
+Assuming the given project has residual content registered, the directory
+`./artifacts` would be created and contain the following:
+- `./artifacts/some/file`
+- `./artifacts/some/dir`
 
 <a name="lxd"/>
 
@@ -818,12 +925,192 @@ adt-buildvm-ubuntu-cloud
 When done move the downloaded image into the location described above.
 
 
+<a name="google"/>
+
+## Google backend
+
+The Google backend is easy to setup and use, and allows distributing
+your tasks to remote infrastructure in Google Compute Engine (GCE).
+
+_$PROJECT/spread.yaml_
+```
+(...)
+
+backends:
+    google:
+        key: $(HOST:echo $GOOGLE_JSON_FILENAME)
+	location: yourproject/southamerica-east1-a
+        systems:
+            - ubuntu-16.04
+
+	    # Extended syntax:
+	    - another-system:
+	        image: some-other-image
+		workers: 3
+```
+
+With these settings the Google backend in Spread will pick credentials from
+the JSON file pointed to in `$GOOGLE_JSON_FILENAME` environment variable
+(we don't want that content inside `spread.yaml` itself). If no key is
+explicitly provided, Spread will attempt to use the "application default"
+credentials as traditional in the Google platform. You can set those up by
+using either a service account:
+```
+$ gcloud auth application-default activate-service-account --key-file=$GOOGLE_JSON_FILENAME
+```
+or your own credentials:
+```
+$ gcloud auth application-default login
+```
+Service accounts are best as they can be further constrained and not be
+associated with your overall authenticated access. Do not ship your own
+credentials to remote systems.
+
+A service account can be attached to a created instances using the following
+configuration:
+
+```
+(...)
+
+backends:
+    google:
+        key: $(HOST:echo $GOOGLE_JSON_FILENAME)
+        ...
+        systems:
+            - system-with-service-account:
+                attach-service-account: true
+...
+```
+
+Service account can only be attached to an instance if the authentication key is
+of `service_acccount` type, and the IAM role associated with the account has the
+necessary permissions.
+
+Images are located by first attempting to match the provided value exactly
+against the image name, and then some processing is done to verify if an
+image with the individual tokens in its description exists. Images are
+first searched for in the project itself, and then if the prefix is a
+recognized name for which a public image project exists (e.g. `ubuntu-*`
+is searched for in the `ubuntu-os-cloud` project too). An explicit image
+project may also be requested by prefixing the image name with a project
+name, as in "ubuntu-os-cloud/ubuntu-16.04-64".
+
+When these machines terminate running, they will be removed. If anything
+happens that prevents the immediate removal, they will remain in the account
+and need to be removed by hand.
+
+For long term use, a dedicated project in the Google Cloud Platform is
+recommended to prevent automated manipulation of important machines.
+
+<a name="openstack"/>
+
+## Openstack backend
+
+The Openstack backend is easy to setup and use, and allows distributing
+your tasks to an openstack environment.
+
+_$PROJECT/spread.yaml_
+```
+(...)
+
+backends:
+    openstack:
+        key: '$(HOST: echo "$SPREAD_OPENSTACK_ENV")'
+        plan: cpu2-ram4-disk10
+        halt-timeout: 2h
+        systems:
+            - ubuntu-20.04:
+                  image: ubuntu-focal-daily-amd64
+                  workers: 5
+
+            # Extended syntax:
+            - another-system:
+                image: some-other-image
+                networks:
+                    - network_external
+                    - network_pvn
+                groups:
+                    - group_external
+
+```
+
+The Openstack backend gets all the information to authenticate from the
+environment variables. These are the supported variables (in all cases at
+least one env var has to be set):
+
+The URL to authenticate against
+```
+OS_AUTH_URL
+```
+
+The username to authenticate as
+```
+OS_USERNAME
+OS_ACCESS_KEY
+```
+
+The secrets to pass
+```
+OS_PASSWORD
+OS_SECRET_KEY
+```
+
+Region to send requests to
+```
+OS_REGION_NAME
+
+```
+
+The project name and ID for this connection
+```
+OS_TENANT_ID
+OS_PROJECT_ID
+OS_PROJECT_NAME
+OS_TENANT_NAME
+
+```
+
+The Keystone version
+```
+OS_AUTH_VERSION
+OS_IDENTITY_API_VERSION
+
+```
+
+The domain for authorization (new in keystone v3)
+```
+OS_DEFAULT_DOMAIN_NAME
+OS_PROJECT_DOMAIN_NAME
+OS_USER_DOMAIN_NAME
+
+```
+
+With the key setting the Openstack backend in Spread will pick the .env file
+with the credentials file pointed to in `$SPREAD_OPENSTACK_ENV` environment
+variable (we don't want that content inside `spread.yaml` itself).
+If no key is explicitly provided, Spread will attempt to use the environment
+variables described previously to authenticate.
+
+You can set up those variables by sourcing the Openstack RC file. 
+For more information about the environment setup please read 
+https://docs.openstack.org/ocata/user-guide/common/cli-set-environment-variables-using-openstack-rc.html
+
+Images are located by first attempting to match the provided value exactly
+against the image name, if there is not exact match the most recent image
+with partial match will be selected.
+
+When these machines terminate running, they will be removed. If anything
+happens that prevents the immediate removal, they will remain in the account
+and need to be removed by hand.
+
+
 <a name="linode"/>
 
 ## Linode backend
 
 The Linode backend is very simple to setup and use as well, and allows
-distributing your tasks over into remote infrastructure.
+distributing your tasks over into remote infrastructure runing in
+Linode's data centers.
 
 _$PROJECT/spread.yaml_
 ```
@@ -897,6 +1184,22 @@ backends:
 	    - ubuntu-16.04
 ```
 
+The Linode backend can also allocate systems dynamically. For that, just define
+these two fields specifying which plan you'd like to use for the new machines,
+and which datacenter to allocate them on:
+```
+backends:
+    linode:
+        key: (...)
+	plan: 4GB
+	location: newark
+```
+
+When these machines terminate running, they will be removed. If anything
+happens that prevents the immediate removal, they will remain in the account
+and then be reused by follow up runs and removed when done, effectively garbage
+collecting what's left behind. System reuse works as explained above too.
+
 Note that in Linode you can create additional users inside your own account
 that have limited access to a selection of servers only, and with limited
 permissions on them. You should use this even if your account is entirely
@@ -909,6 +1212,44 @@ Some links to make your life easier:
   * [Users and permissions](https://manager.linode.com/user)
   * [API keys](https://manager.linode.com/profile/api)
 
+
+<a name="testflinger"/>
+
+[Testflinger backend](#testflinger)
+
+The Testflinger backend allows to allocate and run tasks on devices 
+orchestrated by testflinger server.
+
+_$PROJECT/spread.yaml_
+```
+(...)
+backends:
+    testflinger:
+        wait-timeout: 30m
+        systems:
+            - ubuntu-rpi3:
+                  queue: rpi3
+                  image: https://url/pi.img.xz
+                  workers: 2
+                  username: user
+                  password: pass
+
+```
+
+As the number of devices are limited and the time to get access is uncertaint, the testflinger
+backend uses a specific timeout called `wait-timeout` to specify the waiting time for the device
+allocation. 
+
+Each testflinger system needs to be configured with a queue which is used to identify a set of
+devices and an image which is used by testflinger to provision the device once it is allocated.
+
+When the machines terminate running, they will be free. If anything
+happens that prevents the immediate removal, they will remain in the account
+and need to be removed by hand.
+
+Some links to make your life easier:
+    * [Testflinger documentation](https://testflinger.readthedocs.io)
+    * [Testflinger queues and devices](https://github.com/canonical/certification-lab-docs/blob/main/reference/testflinger-devices.rst)
 
 <a name="adhoc"/>
 

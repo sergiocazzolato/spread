@@ -1,6 +1,10 @@
-.spread-reuse.yaml
+.spread-reuse*.yaml
 cmd/spread/spread
+cmd/humbox/humbox
 tests/cache/*
 parts
 prime
 stage
+.vscode/
+vendor/*/
+vendor/modules.txt
