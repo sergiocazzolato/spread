@@ -503,7 +503,7 @@ func (c *Client) runPart(script string, dir string, env *Environment, mode outpu
 		if mode == perfOutput {
 			logf("Error output from running script on %s:\n-----\n%s\n-----", c.job, stderr.Bytes())
 		} else {
-			debugf("Error output from running script on %s:\n-----\n%s\n-----", c.job, stderr.Bytes())	
+			debugf("Error output from running script on %s:\n-----\n%s\n-----", c.job, stderr.Bytes())
 		}
 	}
 
@@ -705,7 +705,7 @@ func (c *Client) RecvTar(packDir string, include []string, tar io.Writer) error 
 	var stderr safeBuffer
 	session.Stdout = tar
 	session.Stderr = &stderr
-	cmd := fmt.Sprintf(`cd '%s' && %s/bin/tar -cz --sort=name --ignore-failed-read -- %s`, packDir, c.sudo(), strings.Join(args, " "))
+	cmd := fmt.Sprintf(`%s/bin/tar -C %q -cJ --sort=name --ignore-failed-read -- %s`, c.sudo(), packDir, strings.Join(args, " "))
 	err = c.runCommand(session, cmd, nil, &stderr)
 	if err != nil {
 		return outputErr(stderr.Bytes(), err)
