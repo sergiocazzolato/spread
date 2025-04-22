@@ -41,6 +41,7 @@ type Options struct {
 	Repeat         int
 	GarbageCollect bool
 	Perf           bool
+	Workers        int
 }
 
 type Runner struct {

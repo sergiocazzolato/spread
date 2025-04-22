@@ -37,6 +37,7 @@ var (
 	repeat         = flag.Int("repeat", 0, "Number of times to repeat each task")
 	garbageCollect = flag.Bool("gc", false, "Garbage collect backend resources when possible")
 	perf           = flag.Bool("perf", false, "Show tasks output with datetime")
+	workers        = flag.Int("workers", 0, "Number of workers to use on each system")
 )
 
 func main() {
@@ -102,6 +103,7 @@ func run() error {
 		Repeat:         *repeat,
 		GarbageCollect: *garbageCollect,
 		Perf:           *perf,
+		Workers:        *workers,
 	}
 
 	project, err := spread.Load(".")
