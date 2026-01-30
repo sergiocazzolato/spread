@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,13 +13,14 @@ import (
 
 	gooseclient "github.com/go-goose/goose/v5/client"
 	goosehttp "github.com/go-goose/goose/v5/http"
+	"github.com/joho/godotenv"
 
+	"github.com/go-goose/goose/v5/cinder"
 	"github.com/go-goose/goose/v5/glance"
 	"github.com/go-goose/goose/v5/identity"
 	"github.com/go-goose/goose/v5/neutron"
 	"github.com/go-goose/goose/v5/nova"
 
-	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/context"
 )
 
@@ -30,6 +32,10 @@ func OpenStack(p *Project, b *Backend, o *Options) Provider {
 	}
 }
 
+const (
+	ACTIVE = "active"
+)
+
 type glanceImageClient interface {
 	ListImagesDetail() ([]glance.ImageDetail, error)
 }
@@ -39,8 +45,20 @@ type novaComputeClient interface {
 	ListAvailabilityZones() ([]nova.AvailabilityZone, error)
 	GetServer(serverId string) (*nova.ServerDetail, error)
 	ListServersDetail(filter *nova.Filter) ([]nova.ServerDetail, error)
+	ListVolumeAttachments(serverId string) ([]nova.VolumeAttachment, error)
 	RunServer(opts nova.RunServerOpts) (*nova.Entity, error)
 	DeleteServer(serverId string) error
+}
+
+type openstackServices struct {
+	compute OpenstackService
+	volume  OpenstackService
+}
+
+type OpenstackService struct {
+	Name     string
+	version  string
+	endpoint *url.URL
 }
 
 type openstackProvider struct {
@@ -49,10 +67,13 @@ type openstackProvider struct {
 	options *Options
 
 	region        string
-	osClient      gooseclient.Client
+	osClient      gooseclient.AuthenticatingClient
 	computeClient novaComputeClient
 	networkClient *neutron.Client
 	imageClient   glanceImageClient
+	volumeClient  *cinder.Client
+
+	services *openstackServices
 
 	mu sync.Mutex
 
@@ -69,14 +90,45 @@ type openstackServer struct {
 }
 
 type openstackServerData struct {
-	Id       string
-	Name     string
-	Flavor   string    `json:"machineType"`
-	Networks []string  `json:"network"`
-	Status   string    `yaml:"-"`
-	Created  time.Time `json:"creationTimestamp"`
+	Id                  string
+	Name                string
+	Flavor              string    `json:"machineType"`
+	Networks            []string  `json:"network"`
+	Status              string    `yaml:"-"`
+	Created             time.Time `json:"creationTimestamp"`
+	DeleteOnTermination bool
 
 	Labels map[string]string `yaml:"-"`
+}
+
+type openstackVolumeData struct {
+	Id          string             `json:"id"`
+	Status      string             `json:"status"`
+	SnapshotId  string             `json:"snapshot_id,omitempty"`
+	Attachments []VolumeAttachment `json:"attachments,omitempty"`
+	Name        string             `json:"name,omitempty"`
+}
+
+type openstackSnapshotData struct {
+	Id       string `json:"id"`
+	Name     string `json:"name"`
+	Size     int    `json:"size"`
+	Status   string `json:"status"`
+	VolumeID string `json:"volume_id,omitempty"`
+}
+
+type VolumeAttachment struct {
+	Id       string `json:"id"`
+	ServerId string `json:"server_id"`
+	VolumeId string `json:"volume_id"`
+}
+
+type VolumeActionResetStatus struct {
+	Action VolumeActionResetStatusDetails `json:"os-reset_status"`
+}
+
+type VolumeActionResetStatusDetails struct {
+	Status string `json:"status"`
 }
 
 func (s *openstackServer) String() string {
@@ -106,17 +158,43 @@ func (s *openstackServer) ReuseData() interface{} {
 	return &s.d
 }
 
-const (
-	openstackStaging      = "STAGING"
-	openstackProvisioning = "PROVISIONING"
-	openstackRunning      = "RUNNING"
-	openstackStopping     = "STOPPING"
-	openstackStopped      = "STOPPED"
-	openstackSuspending   = "SUSPENDING"
-	openstackTerminating  = "TERMINATED"
+var openstackSerialOutputTimeout = 30 * time.Second
+var openstackSerialConsoleErr = fmt.Errorf("cannot get console output")
 
-	openstackPending = "PENDING"
-	openstackDone    = "DONE"
+func (s *openstackServer) SerialOutput() (string, error) {
+	url := fmt.Sprintf("servers/%s/action", s.d.Id)
+
+	var req struct {
+		OsGetSerialConsole struct{} `json:"os-getConsoleOutput"`
+	}
+	var resp struct {
+		Output string `json:"output"`
+	}
+	requestData := goosehttp.RequestData{ReqValue: req, RespValue: &resp, ExpectedStatus: []int{http.StatusOK}}
+	timeout := time.After(openstackSerialOutputTimeout)
+	retry := time.NewTicker(openstackServerBootRetry)
+	defer retry.Stop()
+
+	for {
+		err := s.p.osClient.SendRequest("POST", s.p.services.compute.Name, s.p.services.compute.version, url, &requestData)
+		if err != nil {
+			debugf("failed to retrieve the serial console for server %s: %v", s, err)
+		}
+		if len(resp.Output) > 0 {
+			return resp.Output, nil
+		}
+		select {
+		case <-retry.C:
+		case <-timeout:
+			return "", fmt.Errorf("failed to retrieve the serial console for instance %s: timeout reached", s)
+		}
+	}
+}
+
+const (
+	serverStatusProvisioning = "PROVISIONING"
+	volumeStatusAvailable    = "available"
+	volumeStatusError        = "error"
 )
 
 func (p *openstackProvider) Backend() *Backend {
@@ -159,10 +237,14 @@ const openstackCloudInitScript = `
 runcmd:
   - echo root:%s | chpasswd
   - sed -i 's/^\s*#\?\s*\(PermitRootLogin\|PasswordAuthentication\)\>.*/\1 yes/' /etc/ssh/sshd_config
+  - sed -i 's/^PermitRootLogin=/#PermitRootLogin=/g' /etc/ssh/sshd_config.d/* || true
+  - sed -i 's/^PasswordAuthentication=/#PasswordAuthentication=/g' /etc/ssh/sshd_config.d/* || true
   - test -d /etc/ssh/sshd_config.d && echo 'PermitRootLogin=yes' > /etc/ssh/sshd_config.d/00-spread.conf
   - test -d /etc/ssh/sshd_config.d && echo 'PasswordAuthentication=yes' >> /etc/ssh/sshd_config.d/00-spread.conf
   - pkill -o -HUP sshd || true
-  - echo '` + openstackReadyMarker + `' > /dev/ttyS0
+  - test -c /dev/ttyS0 && echo '` + openstackReadyMarker + `' 1>/dev/ttyS0 2>/dev/null || true
+  - test -c /dev/ttyAMA0 && echo '` + openstackReadyMarker + `' 1>/dev/ttyAMA0 2>/dev/null || true
+  - test -c /dev/console && echo '` + openstackReadyMarker + `' 1>/dev/console 2>/dev/null || true
 `
 
 const openstackReadyMarker = "MACHINE-IS-READY"
@@ -258,13 +340,29 @@ func (p *openstackProvider) findNetwork(name string) (*neutron.NetworkV2, error)
 	return nil, &FatalError{fmt.Errorf("cannot find valid network with name %q", name)}
 }
 
+func (p *openstackProvider) getActiveImages() ([]glance.ImageDetail, error) {
+	images, err := p.imageClient.ListImagesDetail()
+	activeImages := []glance.ImageDetail{}
+
+	if err != nil {
+		return nil, fmt.Errorf("cannot retrieve images list: %v", &openstackError{err})
+	}
+
+	for _, image := range images {
+		if strings.ToLower(image.Status) == strings.ToLower(ACTIVE) {
+			activeImages = append(activeImages, image)
+		}
+	}
+	return activeImages, nil
+}
+
 func (p *openstackProvider) findImage(imageName string) (*glance.ImageDetail, error) {
 	var lastImage glance.ImageDetail
 	var lastCreatedDate time.Time
 
 	// TODO: consider using an image cache just like the google backend
 	// (https://github.com/snapcore/spread/pull/175 needs to be fixed first)
-	images, err := p.imageClient.ListImagesDetail()
+	images, err := p.getActiveImages()
 	if err != nil {
 		return nil, fmt.Errorf("cannot retrieve images list: %v", &openstackError{err})
 	}
@@ -312,18 +410,6 @@ func (p *openstackProvider) findImage(imageName string) (*glance.ImageDetail, er
 	return nil, &FatalError{fmt.Errorf("cannot find matching image for %q", imageName)}
 }
 
-func (p *openstackProvider) findAvailabilityZone() (*nova.AvailabilityZone, error) {
-	zones, err := p.computeClient.ListAvailabilityZones()
-	if err != nil {
-		return nil, fmt.Errorf("cannot retrieve availability zones: %v", &openstackError{err})
-	}
-
-	if len(zones) == 0 {
-		return nil, &FatalError{errors.New("cannot find any availability zones")}
-	}
-	return &zones[0], nil
-}
-
 func (p *openstackProvider) findSecurityGroupNames(names []string) ([]nova.SecurityGroupName, error) {
 	var secGroupNames []nova.SecurityGroupName
 
@@ -365,7 +451,14 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("timeout waiting for %s to provision", s)
+			server, err := p.computeClient.GetServer(s.d.Id)
+			if err != nil {
+				return fmt.Errorf("timeout waiting for %s to provision", s.d.Id)
+			}
+			if server.Fault == nil {
+				return fmt.Errorf("timeout waiting for %s to provision, status: %s", s.d.Id, server.Status)
+			}
+			return fmt.Errorf("timeout waiting for %s to provision, error: %s", s, server.Fault.Message)
 
 		case <-retry.C:
 			server, err := p.computeClient.GetServer(s.d.Id)
@@ -386,76 +479,8 @@ func (p *openstackProvider) waitProvision(ctx context.Context, s *openstackServe
 	panic("unreachable")
 }
 
-var openstackServerBootTimeout = 2 * time.Minute
+var openstackServerBootTimeout = 5 * time.Minute
 var openstackServerBootRetry = 5 * time.Second
-
-func (p *openstackProvider) waitServerBootSSH(ctx context.Context, s *openstackServer) error {
-	config := &ssh.ClientConfig{
-		User:            "root",
-		Auth:            []ssh.AuthMethod{ssh.Password(p.options.Password)},
-		Timeout:         10 * time.Second,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-	addr := s.address
-	if !strings.Contains(addr, ":") {
-		addr += ":22"
-	}
-
-	// Iterate until the ssh connection to the host can be established
-	// In openstack the client cannot access to the serial console of the instance
-	timeout := time.After(openstackServerBootTimeout)
-	retry := time.NewTicker(openstackServerBootRetry)
-	defer retry.Stop()
-
-	for {
-		select {
-		case <-timeout:
-			return fmt.Errorf("cannot ssh to the allocated instance: timeout reached")
-		case <-retry.C:
-			_, err := sshDial("tcp", addr, config)
-			if err == nil {
-				debugf("Connection to server %s established", s.d.Name)
-				return nil
-			}
-		case <-ctx.Done():
-			return fmt.Errorf("cannot wait for %s to boot: interrupted", s)
-		}
-	}
-}
-
-var openstackSerialOutputTimeout = 30 * time.Second
-
-func (p *openstackProvider) getSerialConsoleOutput(s *openstackServer) (string, error) {
-	url := fmt.Sprintf("servers/%s/action", s.d.Id)
-
-	var req struct {
-		OsGetSerialConsole struct{} `json:"os-getConsoleOutput"`
-	}
-	var resp struct {
-		Output string `json:"output"`
-	}
-	requestData := goosehttp.RequestData{ReqValue: req, RespValue: &resp, ExpectedStatus: []int{http.StatusOK}}
-	timeout := time.After(openstackSerialOutputTimeout)
-	retry := time.NewTicker(openstackServerBootRetry)
-	defer retry.Stop()
-
-	for {
-		err := p.osClient.SendRequest("POST", "compute", "v2", url, &requestData)
-		if err != nil {
-			debugf("failed to retrieve the serial console for server %s: %v", s, err)
-		}
-		if len(resp.Output) > 0 {
-			return resp.Output, nil
-		}
-		select {
-		case <-retry.C:
-		case <-timeout:
-			return "", fmt.Errorf("failed to retrieve the serial console for server %s: timeout reached", s)
-		}
-	}
-}
-
-var openstackSerialConsoleErr = fmt.Errorf("cannot get console output")
 
 func (p *openstackProvider) waitServerBootSerial(ctx context.Context, s *openstackServer) error {
 	timeout := time.After(openstackServerBootTimeout)
@@ -466,7 +491,7 @@ func (p *openstackProvider) waitServerBootSerial(ctx context.Context, s *opensta
 
 	var marker = openstackReadyMarker
 	for {
-		resp, err := p.getSerialConsoleOutput(s)
+		resp, err := s.SerialOutput()
 		if err != nil {
 			return fmt.Errorf("%w: %v", openstackSerialConsoleErr, err)
 		}
@@ -494,12 +519,6 @@ func (p *openstackProvider) waitServerBoot(ctx context.Context, s *openstackServ
 	if err != nil {
 		if !errors.Is(err, openstackSerialConsoleErr) {
 			return err
-		}
-		// It is important to try ssh connection because serial console could
-		// be disabled in the nova configuration
-		err = p.waitServerBootSSH(ctx, s)
-		if err != nil {
-			return fmt.Errorf("cannot connect to server %s: %v", s, err)
 		}
 	}
 	return nil
@@ -577,11 +596,6 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 		return nil, err
 	}
 
-	availabilityZone, err := p.findAvailabilityZone()
-	if err != nil {
-		return nil, err
-	}
-
 	// cloud init script
 	cloudconfig := fmt.Sprintf(openstackCloudInitScript, p.options.Password)
 
@@ -593,15 +607,50 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 		"password": p.options.Password,
 	}
 
-	opts := nova.RunServerOpts{
-		Name:             name,
-		FlavorId:         flavor.Id,
-		ImageId:          image.Id,
-		AvailabilityZone: availabilityZone.Name,
-		Networks:         networks,
-		Metadata:         tags,
-		UserData:         []byte(cloudconfig),
+	// halt-timeout is added to the server to determine the time when it
+	// has to be garbage collected
+	if p.backend.HaltTimeout.Duration != 0 {
+		tags["halt-timeout"] = p.backend.HaltTimeout.Duration.String()
 	}
+
+	opts := nova.RunServerOpts{
+		Name:        name,
+		FlavorId:    flavor.Id,
+		ImageId:     image.Id,
+		Networks:    networks,
+		Metadata:    tags,
+		UserData:    []byte(cloudconfig),
+		ConfigDrive: true, // needed because of CVE-2024-6174
+	}
+
+	// When the storage size is defined, then we use the volume generated
+	// with the source image. Otherwise we boot in an ephemeral disk the
+	// image using the size described in the flavor
+	storage := image.MinimumDisk
+	if system.Storage != 0 {
+		storage = int(system.Storage / gb)
+	}
+	// We use 20 GB as default value for the storage size
+	if storage == 0 {
+		storage = 20
+	}
+
+	// By default volumes are deleted on termination
+	deleteOnTermination := false
+	if p.backend.VolumeAutoDelete == nil {
+		deleteOnTermination = true
+	} else {
+		deleteOnTermination = *p.backend.VolumeAutoDelete
+	}
+
+	opts.BlockDeviceMappings = []nova.BlockDeviceMapping{{
+		BootIndex:           0,
+		SourceType:          "image",
+		DestinationType:     "volume",
+		VolumeSize:          storage,
+		UUID:                image.Id,
+		DeleteOnTermination: deleteOnTermination,
+	}}
 
 	if len(system.Groups) > 0 {
 		sgNames, err := p.findSecurityGroupNames(system.Groups)
@@ -609,6 +658,10 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 			return nil, err
 		}
 		opts.SecurityGroupNames = sgNames
+	}
+
+	if len(p.backend.Location) > 0 {
+		opts.AvailabilityZone = p.backend.Location
 	}
 
 	server, err := p.computeClient.RunServer(opts)
@@ -623,7 +676,7 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 			Name:     name,
 			Flavor:   flavor.Name,
 			Networks: system.Networks,
-			Status:   openstackProvisioning,
+			Status:   serverStatusProvisioning,
 			Created:  time.Now(),
 		},
 
@@ -647,7 +700,7 @@ func (p *openstackProvider) createMachine(ctx context.Context, system *System) (
 	return s, nil
 }
 
-func (p *openstackProvider) list() ([]*openstackServer, error) {
+func (p *openstackProvider) listServers() ([]*openstackServer, error) {
 	debug("Listing available openstack instances...")
 
 	filter := nova.NewFilter()
@@ -677,12 +730,150 @@ func (p *openstackProvider) list() ([]*openstackServer, error) {
 	return instances, nil
 }
 
+func (p *openstackProvider) listVolumes() ([]*openstackVolumeData, error) {
+	debug("Listing available openstack volumes...")
+
+	volumeResults, err := p.volumeClient.GetVolumesDetail()
+	if err != nil {
+		return nil, fmt.Errorf("cannot list openstack volumes: %v", &openstackError{err})
+	}
+
+	var volumes []*openstackVolumeData
+	for _, v := range volumeResults.Volumes {
+		status := v.Status
+		if status == volumeStatusAvailable || strings.HasPrefix(status, volumeStatusError) {
+			attachments := []VolumeAttachment{}
+			for _, a := range v.Attachments {
+				att := VolumeAttachment{
+					Id:       a.Id,
+					ServerId: a.ServerId,
+					VolumeId: a.VolumeId,
+				}
+				attachments = append(attachments, att)
+			}
+			d := openstackVolumeData{
+				Id:          v.ID,
+				Name:        v.Name,
+				Status:      v.Status,
+				Attachments: attachments,
+			}
+			volumes = append(volumes, &d)
+		}
+	}
+	return volumes, nil
+}
+
+func (p *openstackProvider) listSnapshots() ([]*openstackSnapshotData, error) {
+	debug("Listing available openstack snapshots...")
+
+	snapshotResults, err := p.volumeClient.GetSnapshotsDetail()
+	if err != nil {
+		return nil, fmt.Errorf("cannot list openstack snapshots: %v", &openstackError{err})
+	}
+
+	var snapshots []*openstackSnapshotData
+	for _, s := range snapshotResults.Snapshots {
+		d := openstackSnapshotData{
+			Id:       s.ID,
+			Name:     s.Name,
+			Status:   s.Status,
+			Size:     s.Size,
+			VolumeID: s.VolumeID,
+		}
+		snapshots = append(snapshots, &d)
+	}
+	return snapshots, nil
+}
+
+var openstackRemoveServerTimeout = 3 * time.Minute
+var openstackRemoveVolumeTimeout = 2 * time.Minute
+var openstackRemoveRetry = 5 * time.Second
+
 func (p *openstackProvider) removeMachine(ctx context.Context, s *openstackServer) error {
+	_, err := p.computeClient.GetServer(s.d.Id)
+	if err != nil {
+		// this is when the server was already removed
+		return nil
+	}
+
+	volumesToRemove := []nova.VolumeAttachment{}
+	if !s.d.DeleteOnTermination {
+		volumesToRemove, err = p.computeClient.ListVolumeAttachments(s.d.Id)
+		if err != nil {
+			return fmt.Errorf("failed to retrieve the volumes attached to the instance: %v", err)
+		}
+	}
+
+	err = p.removeServer(ctx, s)
+	if err != nil {
+		return err
+	}
+
+	// Remove manually the volumes when DeleteOnTermination is false
+	for _, volumeAttachment := range volumesToRemove {
+		err = p.removeVolume(ctx, s, volumeAttachment.VolumeId)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (p *openstackProvider) removeServer(ctx context.Context, s *openstackServer) error {
 	err := p.computeClient.DeleteServer(s.d.Id)
 	if err != nil {
 		return fmt.Errorf("cannot remove openstack instance: %v", &openstackError{err})
 	}
-	return err
+	timeout := time.After(openstackRemoveServerTimeout)
+	retry := time.NewTicker(openstackRemoveRetry)
+	defer retry.Stop()
+
+	for {
+		server, err := p.computeClient.GetServer(s.d.Id)
+		if err != nil || server.Status == nova.StatusDeleted {
+			// this is when the server was already removed
+			return nil
+		}
+
+		select {
+		case <-retry.C:
+		case <-timeout:
+			printf("cannot remove the openstack server %s (%s): timeout reached with server status %s", server.Id, s.d.Name, server.Status)
+			return nil
+		}
+	}
+}
+
+func (p *openstackProvider) removeVolume(ctx context.Context, s *openstackServer, volumeId string) error {
+	timeout := time.After(openstackRemoveVolumeTimeout)
+	retry := time.NewTicker(openstackRemoveRetry)
+	defer retry.Stop()
+
+	for {
+		volumeResults, err := p.volumeClient.GetVolume(volumeId)
+		if err != nil {
+			// this is when the volume was already removed
+			return nil
+		}
+
+		status := volumeResults.Volume.Status
+		if status == volumeStatusAvailable || strings.HasPrefix(status, volumeStatusError) {
+			// When the status is either available or error, the volume is deleted
+			// otherwise, it will garbage collected after a time when it becomes available
+			err := p.volumeClient.DeleteVolume(volumeId)
+			if err != nil {
+				return fmt.Errorf("cannot remove openstack volume: %v", &openstackError{err})
+			}
+			return nil
+		}
+		select {
+		case <-retry.C:
+		case <-timeout:
+			printf("cannot remove the openstack volume %s for server %s, it remains with status %s", volumeResults.Volume.ID, s.d.Name, status)
+			return nil
+		}
+	}
 }
 
 func (p *openstackProvider) GarbageCollect() error {
@@ -690,7 +881,16 @@ func (p *openstackProvider) GarbageCollect() error {
 		return err
 	}
 
-	instances, err := p.list()
+	instances, err := p.listServers()
+	if err != nil {
+		return err
+	}
+
+	volumes, err := p.listVolumes()
+	if err != nil {
+		return err
+	}
+	snapshots, err := p.listSnapshots()
 	if err != nil {
 		return err
 	}
@@ -700,6 +900,7 @@ func (p *openstackProvider) GarbageCollect() error {
 
 	// Iterate over all the running instances
 	for _, s := range instances {
+
 		serverTimeout := haltTimeout
 		if value, ok := s.d.Labels["halt-timeout"]; ok {
 			d, err := time.ParseDuration(strings.TrimSpace(value))
@@ -715,17 +916,73 @@ func (p *openstackProvider) GarbageCollect() error {
 		}
 
 		printf("Checking openstack instance %s...", s)
-
 		runningTime := now.Sub(s.d.Created)
 		if runningTime > serverTimeout {
 			printf("Server %s exceeds halt-timeout. Shutting it down...", s)
 			err := p.removeMachine(context.Background(), s)
 			if err != nil {
-				printf("WARNING: Cannot garbage collect %s: %v", s, err)
+				printf("WARNING: Cannot garbage collect server %s: %v", s, err)
 			}
 		}
 	}
 
+	// Iterate over all the volumes
+	for _, v := range volumes {
+		printf("Checking openstack volume %s...", v.Id)
+
+		snapshotAttached := ""
+		for _, s := range snapshots {
+			if s.VolumeID == v.Id {
+				snapshotAttached = s.Id
+				break
+			}
+		}
+
+		if snapshotAttached == "" {
+			printf("Volume ready to be deleted %s. Shutting it down...", v.Id)
+			err := p.volumeClient.DeleteVolume(v.Id)
+			if err != nil {
+				printf("WARNING: Cannot garbage collect volume %s: %v", v.Id, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (p *openstackProvider) saveServices() error {
+	endpoints := p.osClient.EndpointsForRegion(p.region)
+	p.services = &openstackServices{}
+
+	for k, v := range endpoints {
+		if strings.HasPrefix(k, "volume") || strings.HasPrefix(k, "compute") {
+			ver := "v2"
+			if strings.HasSuffix(k, "v3") {
+				ver = "v3"
+			}
+			endpointUrl, err := url.Parse(v)
+			if err != nil {
+				return &FatalError{fmt.Errorf("error parsing endpoint: %v", &openstackError{err})}
+			}
+
+			service := OpenstackService{
+				Name:     k,
+				version:  ver,
+				endpoint: endpointUrl,
+			}
+			if strings.HasPrefix(k, "compute") {
+				p.services.compute = service
+			} else {
+				p.services.volume = service
+			}
+		}
+	}
+	if p.services.compute.Name == "" {
+		return &FatalError{fmt.Errorf("compute services endpoint not found")}
+	}
+	if p.services.volume.Name == "" {
+		return &FatalError{fmt.Errorf("volume services endpoint not found")}
+	}
 	return nil
 }
 
@@ -751,8 +1008,23 @@ func (p *openstackProvider) checkCredentials() error {
 }
 
 func (p *openstackProvider) authenticate() error {
+	// Load environment variables used to authenticate
+	if p.backend.Key != "" {
+		godotenv.Overload(p.backend.Key)
+	}
+
+	// retrieve variables used to authenticate from the environment
+	creds, err := identity.CompleteCredentialsFromEnv()
+	if err != nil {
+		return &FatalError{fmt.Errorf("cannot retrieve credentials from env: %v", err)}
+	}
+
+	if p.backend.Endpoint != "" {
+		creds.URL = p.backend.Endpoint
+	}
+
 	// Only identity API v3 is currently supported
-	identityAPIVersion, err := getIdentityAPIVersion(p.backend.Endpoint)
+	identityAPIVersion, err := getIdentityAPIVersion(creds.URL)
 	if err != nil {
 		return fmt.Errorf("cannot obtain the identity API version: %w", err)
 	}
@@ -760,23 +1032,6 @@ func (p *openstackProvider) authenticate() error {
 		return errors.New("identity API version not supported")
 	}
 
-	// The location entry contains project/region
-	var osproj, region string
-	loc := strings.SplitN(p.backend.Location, "/", 2)
-	if len(loc) != 2 {
-		return errors.New("cannot obtain project and region from location")
-	}
-	osproj, region = loc[0], loc[1]
-
-	// Authenticate using the project credentials.
-	creds := &identity.Credentials{
-		URL:        p.backend.Endpoint, // The authentication URL
-		User:       p.backend.Account,  // The username to authenticate as
-		Secrets:    p.backend.Key,      // The authentication secret
-		Region:     region,             // The OS region
-		TenantName: osproj,             // The OS project name
-		Version:    identityAPIVersion, // The identity API version
-	}
 	authClient := gooseclient.NewClient(creds, identity.AuthUserPassV3, nil)
 	if err := authClient.Authenticate(); err != nil {
 		err = fmt.Errorf("cannot authenticate: %v", &openstackError{err})
@@ -787,6 +1042,17 @@ func (p *openstackProvider) authenticate() error {
 	p.computeClient = nova.New(authClient)
 	p.networkClient = neutron.New(authClient)
 	p.imageClient = glance.New(authClient)
+
+	err = p.saveServices()
+	if err != nil {
+		return &FatalError{fmt.Errorf("failed to save services: %v", &openstackError{err})}
+	}
+
+	handleRequest := cinder.SetAuthHeaderFn(p.osClient.Token,
+		func(req *http.Request) (*http.Response, error) {
+			return http.DefaultClient.Do(req)
+		})
+	p.volumeClient = cinder.NewClient(p.osClient.TenantId(), p.services.volume.endpoint, handleRequest)
 
 	return nil
 }

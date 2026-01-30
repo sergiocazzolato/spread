@@ -16,7 +16,10 @@ require (
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
 )
 
-require golang.org/x/term v0.30.0
+require (
+	github.com/joho/godotenv v1.5.1
+	golang.org/x/term v0.30.0
+)
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
